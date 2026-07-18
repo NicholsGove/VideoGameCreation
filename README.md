@@ -18,22 +18,26 @@ offline. (Online co-op loads a small networking library from a CDN.)
 
 ## The heroes
 
-**Nichols** — the Inventor & Engineer (blue & silver). Brown skin, explorer
-jacket, a mechanical gauntlet and a small backpack.
+**Nichols** — the Inventor & Engineer (**green** & silver). Brown skin, explorer
+jacket, a mechanical gauntlet and a small backpack. Operates **green** mechanisms.
 - **Carry & throw**: pick up crates, hold to charge, release to throw in any
   direction — throws arc, bounce off walls, and can be caught by his partner.
 - **Grapple**: yank distant levers with the grappling tool.
 - **Build**: assemble temporary bridges at anchor points (they decay).
-- Pushes heavy objects · repairs machines · activates blue mechanisms · immune to electricity.
+- Pushes heavy objects · repairs machines · activates green mechanisms · immune to electricity.
 - Weakness: poison gas.
 
-**Nibihah** — the Explorer & Acrobat (green & gold). Brown skin, a long braid,
-a hooded travel cape and a satchel.
+**Nibihah** — the Explorer & Acrobat (**blue** & gold). Brown skin, a long braid,
+a hooded travel cape and a satchel. Operates **blue** mechanisms.
 - **Mid-air dash**, **crawl** through low gaps, and a faster wall-climb grip.
 - **Detection**: reveals invisible platforms, hidden switches and ancient
   symbols — secret rooms she opens become shortcuts for both heroes.
-- Double jump · fits through narrow passages · activates green mechanisms · immune to poison.
+- Double jump · fits through narrow passages · activates blue mechanisms · immune to poison.
 - Weakness: electrical hazards.
+
+> Note: a hero's colour drives which coloured mechanisms they can operate, not
+> what they survive. Nichols is green but still the electricity-proof one;
+> Nibihah is blue but still the one who can walk through poison.
 
 **Co-op:** stand on each other's heads and ride along — but a hero carrying a
 partner jumps noticeably lower, so stacking is powerful without being free.
@@ -226,6 +230,18 @@ serialisable levels for netcode.
 - **New biome/weather** → add palettes in `level.js` + a config in `weather.js`.
 
 ## Tests
+
+Run the verification harness with:
+
+```
+node tests/verify.js
+```
+
+It stubs the DOM, loads the real game files and checks character identity,
+colour-lock ownership, spawn safety, the portal rule, and **staged solvability
+for every campaign level** — opening gates in puzzle order to prove each lever
+or key is reachable *before* the gate it controls. Current status: **179/179**.
+
 
 A headless Node harness stubs the DOM and exercises physics stability, all 7
 levels' win conditions, elemental immunity, colour-locked switches, the crate

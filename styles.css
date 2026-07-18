@@ -19,8 +19,12 @@
   --stone:     #2b2340;
   --stone-2:   #191330;
   --stone-3:   #3b3057;
-  --crystal-b: #4fc3ff;   /* Nichols */
-  --crystal-g: #6ef0a0;   /* Nibihah */
+  /* Player 1 = Nichols (green), Player 2 = Nibihah (blue).
+     --crystal-p1 / --p2 follow the heroes; -b/-g stay as raw hues. */
+  --crystal-b: #4fc3ff;   /* blue hue  — Nibihah */
+  --crystal-g: #6ef0a0;   /* green hue — Nichols */
+  --crystal-p1: #6ef0a0;  /* Player 1 accent */
+  --crystal-p2: #4fc3ff;  /* Player 2 accent */
   --crystal-p: #c07bff;
   --ink:       #f6ecd2;   /* warm parchment text */
   --muted:     #cdb488;   /* aged gold */
@@ -229,8 +233,8 @@ select { min-width: 150px; }
   border: 1px solid rgba(255,224,138,.25); border-bottom-width: 3px;
   transition: transform .06s, box-shadow .12s, background .12s;
 }
-.key.p1 { background: linear-gradient(180deg, #245a80, #143b56); border-color: var(--crystal-b); box-shadow: 0 0 10px rgba(79,195,255,.4); color: #dff2ff; }
-.key.p2 { background: linear-gradient(180deg, #1f6a3e, #12452a); border-color: var(--crystal-g); box-shadow: 0 0 10px rgba(110,240,160,.4); color: #dfffe8; }
+.key.p1 { background: linear-gradient(180deg, #1f6a3e, #12452a); border-color: var(--crystal-p1); box-shadow: 0 0 10px rgba(110,240,160,.4); color: #dfffe8; }
+.key.p2 { background: linear-gradient(180deg, #245a80, #143b56); border-color: var(--crystal-p2); box-shadow: 0 0 10px rgba(79,195,255,.4); color: #dff2ff; }
 .key.pressed { transform: translateY(3px) scale(.94); border-bottom-width: 1px; filter: brightness(1.4); }
 .key.rebind { animation: spark .6s infinite; border-color: var(--gold-line); }
 
@@ -238,8 +242,8 @@ select { min-width: 150px; }
 
 /* ---- Badges, lobby, credits, level grid --------------------------------- */
 .badge { display: inline-block; font-family: var(--font-title); font-weight: 700; font-size: 11px; padding: 3px 9px; border-radius: 20px; background: rgba(0,0,0,.3); color: var(--muted); border: 1px solid rgba(255,224,138,.2); }
-.badge.p1 { color: #cfeeff; border-color: var(--crystal-b); background: rgba(79,195,255,.14); }
-.badge.p2 { color: #d6ffe4; border-color: var(--crystal-g); background: rgba(110,240,160,.14); }
+.badge.p1 { color: #d6ffe4; border-color: var(--crystal-p1); background: rgba(110,240,160,.14); }
+.badge.p2 { color: #cfeeff; border-color: var(--crystal-p2); background: rgba(79,195,255,.14); }
 .badge.ok { color: var(--crystal-g); } .badge.warn { color: var(--gold); } .badge.err { color: var(--danger); }
 
 .credits p { color: var(--muted); font-size: 14px; line-height: 1.7; margin: 6px 0; font-family: var(--font-body); }
@@ -276,16 +280,16 @@ select { min-width: 150px; }
   background: linear-gradient(180deg, var(--stone-3), var(--stone-2));
 }
 .portrait canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
-.portrait.p1 { box-shadow: 0 0 16px rgba(79,195,255,.5), inset 0 0 0 1px rgba(255,224,138,.25); }
-.portrait.p2 { box-shadow: 0 0 16px rgba(110,240,160,.5), inset 0 0 0 1px rgba(255,224,138,.25); }
+.portrait.p1 { box-shadow: 0 0 16px rgba(110,240,160,.5), inset 0 0 0 1px rgba(255,224,138,.25); }
+.portrait.p2 { box-shadow: 0 0 16px rgba(79,195,255,.5), inset 0 0 0 1px rgba(255,224,138,.25); }
 .hud-hero .meta { display: flex; flex-direction: column; gap: 3px; }
 .hud-hero .name { font-family: var(--font-title); font-weight: 800; font-size: 14px; color: var(--gold-line); text-shadow: 0 1px 2px #000; display: flex; align-items: center; gap: 6px; }
 .hud-hero.right .name { flex-direction: row-reverse; }
 .hud-hero .ability { font-size: 15px; }
 .crystal { display: flex; gap: 3px; }
 .hud-hero.right .crystal { flex-direction: row-reverse; }
-.crystal i { width: 9px; height: 14px; border-radius: 2px; transform: skewX(-8deg); background: linear-gradient(180deg, #fff, var(--crystal-b)); box-shadow: 0 0 6px var(--crystal-b); }
-.crystal.p2 i { background: linear-gradient(180deg, #fff, var(--crystal-g)); box-shadow: 0 0 6px var(--crystal-g); }
+.crystal i { width: 9px; height: 14px; border-radius: 2px; transform: skewX(-8deg); background: linear-gradient(180deg, #fff, var(--crystal-p1)); box-shadow: 0 0 6px var(--crystal-p1); }
+.crystal.p2 i { background: linear-gradient(180deg, #fff, var(--crystal-p2)); box-shadow: 0 0 6px var(--crystal-p2); }
 .crystal i.broken { background: #2a2038; box-shadow: none; opacity: .5; }
 .respawn { font-family: var(--font-title); font-size: 12px; color: var(--gold); text-shadow: 0 1px 2px #000; }
 

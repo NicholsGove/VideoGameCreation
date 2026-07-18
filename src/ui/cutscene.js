@@ -98,7 +98,7 @@
       ctx.shadowBlur = 0;
       // the compass half glowing in front of the hero
       const hx = W / 2, hy = H * 0.86;
-      const col = who === 0 ? "#4fc3ff" : "#6ef0a0";
+      const col = who === 0 ? "#6ef0a0" : "#4fc3ff";   // Nichols green, Nibihah blue
       ctx.save(); ctx.globalCompositeOperation = "lighter";
       const g = ctx.createRadialGradient(hx + 60, hy - 40, 0, hx + 60, hy - 40, 70);
       g.addColorStop(0, col); g.addColorStop(1, "rgba(0,0,0,0)");
@@ -120,8 +120,8 @@
       const gap = Math.max(40, 200 - t * 60);
       GG.cutscene._hero(ctx, 0, W / 2 - gap, H * 0.86, "walk", t, 1);
       GG.cutscene._hero(ctx, 1, W / 2 + gap, H * 0.86, "walk", t, -1);
-      P.half(ctx, W / 2 - gap + 26, H * 0.86 - 40, "#4fc3ff", -1);
-      P.half(ctx, W / 2 + gap - 26, H * 0.86 - 40, "#6ef0a0", 1);
+      P.half(ctx, W / 2 - gap + 26, H * 0.86 - 40, "#6ef0a0", -1);   // Nichols' half
+      P.half(ctx, W / 2 + gap - 26, H * 0.86 - 40, "#4fc3ff", 1);    // Nibihah's half
     },
     // the compass merging + awakening
     compass(ctx, t) {
@@ -140,8 +140,8 @@
       for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + t * 0.6; ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * 20, cy + Math.sin(a) * 20); ctx.lineTo(cx + Math.cos(a) * 40, cy + Math.sin(a) * 40); ctx.stroke(); }
       // needle
       ctx.save(); ctx.translate(cx, cy); ctx.rotate(Math.sin(t * 2) * 0.7);
-      ctx.fillStyle = "#4fc3ff"; ctx.beginPath(); ctx.moveTo(0, -34); ctx.lineTo(6, 0); ctx.lineTo(-6, 0); ctx.fill();
-      ctx.fillStyle = "#6ef0a0"; ctx.beginPath(); ctx.moveTo(0, 34); ctx.lineTo(6, 0); ctx.lineTo(-6, 0); ctx.fill();
+      ctx.fillStyle = "#6ef0a0"; ctx.beginPath(); ctx.moveTo(0, -34); ctx.lineTo(6, 0); ctx.lineTo(-6, 0); ctx.fill();
+      ctx.fillStyle = "#4fc3ff"; ctx.beginPath(); ctx.moveTo(0, 34); ctx.lineTo(6, 0); ctx.lineTo(-6, 0); ctx.fill();
       ctx.restore(); ctx.shadowBlur = 0;
       GG.cutscene._hero(ctx, 0, cx - 90, H * 0.88, "idle", t, 1);
       GG.cutscene._hero(ctx, 1, cx + 90, H * 0.88, "idle", t, -1);

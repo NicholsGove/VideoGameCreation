@@ -400,7 +400,8 @@
       this.occupied = p && !p.dead && U.aabb(p, this);
     }
     render(ctx) {
-      const c = this.player === 0 ? COLORS.blue : COLORS.green;
+      // player 0 = Nichols (green), player 1 = Nibihah (blue)
+      const c = this.player === 0 ? COLORS.green : COLORS.blue;
       ctx.save(); ctx.translate(this.cx, this.y + this.h);
       const glow = this.occupied ? 1 : 0.5 + Math.sin(this.t * 4) * 0.2;
       ctx.globalAlpha = glow;
@@ -786,7 +787,8 @@
   // ------------------------------------------------------------------ Grapple lever (Nichols pulls from afar)
   class GrappleLever extends Switch {
     // A lever Nichols can yank from a distance with the grappling tool.
-    constructor(cfg) { super(Object.assign({ colorLock: "blue", range: 200 }, cfg)); }
+    // Nichols' tool, so it answers to his colour (green).
+    constructor(cfg) { super(Object.assign({ colorLock: "green", range: 200 }, cfg)); }
     update(dt, level) {
       super.update(dt, level);
       // remote pull: Nichols presses GRAPPLE while roughly level with the lever

@@ -16,37 +16,41 @@
   const CHARACTERS = [
     {
       // Nichols — the Inventor & Engineer. Brown skin, explorer jacket, a
-      // mechanical gauntlet, small backpack. Blue & silver palette.
-      id: "nichols", name: "Nichols", color: "blue",
-      body: "#3a6ea5", dark: "#24466a", light: "#a9c8ec",
+      // mechanical gauntlet, small backpack. Green & silver palette.
+      // NOTE: his colour drives which coloured mechanisms he can operate
+      // (GREEN), but his immunity is unchanged — he still shrugs off electricity.
+      id: "nichols", name: "Nichols", color: "green",
+      body: "#3a8a4a", dark: "#255c31", light: "#bff0c8",
       immune: ["electric"], canPushHeavy: true, canRepair: true,
       canCarry: true, canGrapple: true, canBuild: true,     // engineer toolkit
       canDash: false, canCrawl: false, canDetect: false,
       jumpScale: 1.0, maxJumps: 1, narrow: false, height: 30, climbGrip: 1.0,
       pal: {
         skin: "#a56a43", skinShade: "#864f2f", hair: "#241812",
-        jacket: "#3a6ea5", jacketDark: "#274a72", pants: "#2c3446",
+        jacket: "#3a8a4a", jacketDark: "#255c31", pants: "#2c3446",
         silver: "#c9d2e0", silverDark: "#8b95a8", belt: "#5a3a24",
-        boot: "#3a2a1a", accent: "#5ea0e6", glowc: "#7fc4ff",
+        boot: "#3a2a1a", accent: "#6ec27e", glowc: "#9bf0b8",
       },
-      blurb: "Immune to electricity · pushes heavy objects · repairs machines · activates BLUE mechanisms",
+      blurb: "Immune to electricity · pushes heavy objects · repairs machines · activates GREEN mechanisms",
     },
     {
       // Nibihah — the Explorer & Acrobat. Brown skin, long braid, hooded cape,
-      // satchel. Green & gold palette. Double jump, fits through gaps.
-      id: "nibihah", name: "Nibihah", color: "green",
-      body: "#3a8a4a", dark: "#255c31", light: "#bff0c8",
+      // satchel. Blue & gold palette. Double jump, fits through gaps.
+      // Her colour drives which mechanisms she operates (BLUE); she remains
+      // the one who can survive poison.
+      id: "nibihah", name: "Nibihah", color: "blue",
+      body: "#3a6ea5", dark: "#24466a", light: "#a9c8ec",
       immune: ["poison"], canPushHeavy: false, canRepair: false,
       canCarry: false, canGrapple: false, canBuild: false,
       canDash: true, canCrawl: true, canDetect: true,        // explorer toolkit
       jumpScale: 1.02, maxJumps: 2, narrow: true, height: 24, climbGrip: 0.45,
       pal: {
         skin: "#a56a43", skinShade: "#864f2f", hair: "#241812",
-        cape: "#3a8a4a", capeDark: "#255c31", cloth: "#4fae5f",
+        cape: "#3a6ea5", capeDark: "#274a72", cloth: "#4f86c6",
         gold: "#ddb84a", goldDark: "#a3862f", belt: "#5a4324",
-        boot: "#3a2a1a", accent: "#7ed08a", glowc: "#9bf0b8",
+        boot: "#3a2a1a", accent: "#7fb0e6", glowc: "#a9d4ff",
       },
-      blurb: "Immune to poison · double-jump · fits through narrow passages · activates GREEN mechanisms",
+      blurb: "Immune to poison · double-jump · fits through narrow passages · activates BLUE mechanisms",
     },
   ];
 

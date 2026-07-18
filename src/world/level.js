@@ -436,7 +436,7 @@
         ctx.beginPath(); ctx.arc(sx, sy, rr, 0, Math.PI * 2); ctx.fill();
       };
       for (const p of this.players) if (!p.dead) glow(p.cx, p.cy, 34, p.character.body, 0.22);
-      for (const e of this.exits) glow(e.cx, e.cy, 40, (e.player === 0 ? O.COLORS.blue : O.COLORS.green).main, 0.28);
+      for (const e of this.exits) glow(e.cx, e.cy, 40, (e.player === 0 ? O.COLORS.green : O.COLORS.blue).main, 0.28);
       for (const g of this.gems) if (!g.collected) glow(g.cx, g.cy, 22, O.COLORS.gold.main, 0.3);
       for (const l of this.lasers) if (l.active(this)) for (const s of l.segments) glow((s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2, 30, O.COLORS.red.main, 0.18);
       ctx.restore();

@@ -154,8 +154,8 @@
         <div class="menu">
           <h2>How to Play</h2>
           <p class="credits">
-            <b>Nichols</b> (blue) — immune to <span class="badge p1">electricity</span>, pushes heavy objects, repairs machines, activates blue mechanisms.<br>
-            <b>Nibihah</b> (green) — immune to <span class="badge p2">poison</span>, double-jumps, fits through narrow passages, activates green mechanisms.<br><br>
+            <b>Nichols</b> (green) — immune to <span class="badge p1">electricity</span>, pushes heavy objects, repairs machines, activates GREEN mechanisms.<br>
+            <b>Nibihah</b> (blue) — immune to <span class="badge p2">poison</span>, double-jumps, fits through narrow passages, activates BLUE mechanisms.<br><br>
             <b>Cooperative physics:</b> stand on each other's heads, jump off a partner to reach higher ledges, and push one another. Wall-slide down tall walls; drop through one-way platforms by holding <span class="kbd">↓</span>.<br><br>
             Neither hero can finish alone — <b>both</b> must stand on their matching exit pads at once. <b>Gamepads</b> are auto-detected.
           </p>

@@ -78,15 +78,15 @@
     box(g, 24, 12, 27, 12, 2);      // ledge over the timed-door side room
     LEVELS.push({
       id: 102, chapter: 0, name: "Switch & Signal", theme: "ruins", biome: "Sunken Ruins",
-      hint: "Blue mechanisms obey Kiro; green obey Lyra. Open each other's doors to advance.",
+      hint: "Green mechanisms obey Nichols; blue obey Nibihah. Open each other's doors to advance.",
       spawns: [spawn(2, 14), spawn(3, 14)],
       objects: [
         // Only Circuit can flip the blue switch -> opens the GREEN door for Bloom.
-        O("switch", 5, 15, { channel: "gdoor", colorLock: "blue", w: 22, h: 28, y: FLOOR_TOP - 28 }),
-        O("door", 8, 14, { channel: "gdoor", color: "green", w: T, h: 2 * T }),
+        O("switch", 5, 15, { channel: "gdoor", colorLock: "green", w: 22, h: 28, y: FLOOR_TOP - 28 }),
+        O("door", 8, 14, { channel: "gdoor", color: "blue", w: T, h: 2 * T }),
         // Only Bloom can flip the green switch -> opens the BLUE door for Circuit.
-        O("switch", 11, 15, { channel: "bdoor", colorLock: "green", w: 22, h: 28, y: FLOOR_TOP - 28 }),
-        O("door", 15, 14, { channel: "bdoor", color: "blue", w: T, h: 2 * T }),
+        O("switch", 11, 15, { channel: "bdoor", colorLock: "blue", w: 22, h: 28, y: FLOOR_TOP - 28 }),
+        O("door", 15, 14, { channel: "bdoor", color: "green", w: T, h: 2 * T }),
         // hazards to reinforce immunity
         O("hazard", 18, 14, { kind: "electric", w: 2 * T, h: 2 * T }),
         O("hazard", 20, 14, { kind: "poison", w: 2 * T, h: 2 * T }),
@@ -180,17 +180,17 @@
         // Beam 1 (vertical chokepoint) — ON by default; only CIRCUIT's blue
         // switch disables it, clearing the way for Bloom to advance.
         O("laser", 20, 1, { dir: "down", w: T, h: T, channel: "beam1off", invert: true }),
-        O("switch", 16, 15, { channel: "beam1off", colorLock: "blue", w: 22, h: 28, y: FLOOR_TOP - 28 }),
+        O("switch", 16, 15, { channel: "beam1off", colorLock: "green", w: 22, h: 28, y: FLOOR_TOP - 28 }),
         // Beam 2 (vertical chokepoint) — only BLOOM's green switch disables it,
         // and the switch sits PAST beam 1, so Circuit must clear beam 1 first.
         O("laser", 26, 1, { dir: "down", w: T, h: T, channel: "beam2off", invert: true }),
-        O("switch", 23, 15, { channel: "beam2off", colorLock: "green", w: 22, h: 28, y: FLOOR_TOP - 28 }),
+        O("switch", 23, 15, { channel: "beam2off", colorLock: "blue", w: 22, h: 28, y: FLOOR_TOP - 28 }),
         // Safe demonstrative reflecting beam near the ceiling (mirror bends it).
         O("laser", 7, 2, { dir: "right", w: T, h: T }),
         O("mirror", 30, 2, { orient: "/", w: T, h: T }),
         // Teleporter: warp up to a hidden bonus gem ledge (self-contained).
-        O("teleporter", 5, 15, { id: 900, pair: 901, color: "green", w: T, h: T }),
-        O("teleporter", 12, 7, { id: 901, pair: 900, color: "green", w: T, h: T }),
+        O("teleporter", 5, 15, { id: 900, pair: 901, color: "blue", w: T, h: T }),
+        O("teleporter", 12, 7, { id: 901, pair: 900, color: "blue", w: T, h: T }),
         // Elemental gates before the exits — single tiles you hop over.
         O("hazard", 31, 14, { kind: "poison", w: T, h: 2 * T }),
         O("hazard", 33, 14, { kind: "electric", w: T, h: 2 * T }),
@@ -215,13 +215,13 @@
       objects: [
         // Kiro repairs a machine to power the first gate open (Lyra can't).
         O("repair", 6, 15, { channel: "power", y: FLOOR_TOP - 30 }),
-        O("door", 10, 14, { channel: "power", color: "blue", w: T, h: 2 * T }),
+        O("door", 10, 14, { channel: "power", color: "green", w: T, h: 2 * T }),
         // A Lyra-only narrow passage guarding a bonus gem in a pocket.
         O("narrow", 14, 15, { w: T, h: T }),
         O("gem", 14, 16, {}),
         // High ledge with the green switch — reach it via a head-stack + double jump.
-        O("switch", 21, 8, { channel: "exitgate", colorLock: "green", w: 22, h: 28, y: 9 * T - 28 }),
-        O("door", 27, 14, { channel: "exitgate", color: "green", w: T, h: 2 * T }),
+        O("switch", 21, 8, { channel: "exitgate", colorLock: "blue", w: 22, h: 28, y: 9 * T - 28 }),
+        O("door", 27, 14, { channel: "exitgate", color: "blue", w: T, h: 2 * T }),
         O("gem", 21, 7, {}),
         O("gem", 35, 9, {}),
         O("exit", 37, 15, { player: 0 }),
@@ -241,14 +241,14 @@
       spawns: [spawn(2, 14), spawn(3, 14)],
       objects: [
         // Guardian beam A — only Kiro's blue switch disables it.
-        O("switch", 6, 15, { channel: "beamA", colorLock: "blue", w: 22, h: 28, y: FLOOR_TOP - 28 }),
+        O("switch", 6, 15, { channel: "beamA", colorLock: "green", w: 22, h: 28, y: FLOOR_TOP - 28 }),
         O("laser", 18, 1, { dir: "down", channel: "beamA", invert: true, w: T, h: T }),
         // Guardian beam B — only Lyra's green switch (up on the ledge) disables it.
-        O("switch", 14, 9, { channel: "beamB", colorLock: "green", w: 22, h: 28, y: 10 * T - 28 }),
+        O("switch", 14, 9, { channel: "beamB", colorLock: "blue", w: 22, h: 28, y: 10 * T - 28 }),
         O("laser", 22, 1, { dir: "down", channel: "beamB", invert: true, w: T, h: T }),
         // Teleporter warps Lyra up to the ledge for beam B's switch.
-        O("teleporter", 5, 15, { id: 920, pair: 921, color: "green", w: T, h: T }),
-        O("teleporter", 12, 9, { id: 921, pair: 920, color: "green", w: T, h: T }),
+        O("teleporter", 5, 15, { id: 920, pair: 921, color: "blue", w: T, h: T }),
+        O("teleporter", 12, 9, { id: 921, pair: 920, color: "blue", w: T, h: T }),
         // Restore the Heart Engine (Kiro) to open the final gate.
         O("repair", 26, 15, { channel: "heart", y: FLOOR_TOP - 30 }),
         O("door", 30, 14, { channel: "heart", color: "gold", w: T, h: 2 * T }),
@@ -386,7 +386,7 @@
 
   push1({
     id: 5, name: "Blue and Green", teaches: "Colour switches",
-    hint: "Blue levers obey Nichols, green obey Nibihah — the last gate needs BOTH left on. Time the crushers.",
+    hint: "Green levers obey Nichols, blue obey Nibihah — the last gate needs BOTH left on. Time the crushers.",
     tier: "medium",
     build: (g) => {
       box(g, 22, FLOOR, 24, ROWS - 1, 0);     // spike pit before the final gate
@@ -396,11 +396,11 @@
     },
     spawns: [spawn(2, 14), spawn(3, 14)],
     objects: [
-      O("switch", 6, 15, { channel: "A", colorLock: "blue", w: 22, h: 28, y: FLOOR_TOP - 28 }),
-      gate(11, { channel: "A", color: "blue" }),
+      O("switch", 6, 15, { channel: "A", colorLock: "green", w: 22, h: 28, y: FLOOR_TOP - 28 }),
+      gate(11, { channel: "A", color: "green" }),
       O("crusher", 14, 2, { travel: 10 * T, axis: "y", period: 2.8, phase: 0 }),
-      O("switch", 16, 15, { channel: "B", colorLock: "green", w: 22, h: 28, y: FLOOR_TOP - 28 }),
-      gate(21, { channel: "B", color: "green" }),
+      O("switch", 16, 15, { channel: "B", colorLock: "blue", w: 22, h: 28, y: FLOOR_TOP - 28 }),
+      gate(21, { channel: "B", color: "blue" }),
       spikes(22, 3),
       O("crusher", 26, 2, { travel: 10 * T, axis: "y", period: 2.8, phase: 1.4 }),
       gate(29, { channels: ["A", "B"] }),       // both levers must stay on
@@ -437,7 +437,7 @@
       O("blade", 11, 22, { x2: 20 * T, y2: 22 * T, speed: 100 }),
       // the summit is sealed until the boost-only lever is thrown
       O("switch", 20, 24, { channel: "top", w: 22, h: 28, y: 25 * T - 28 }),
-      H6.wall(17, 8, 3, { channel: "top", color: "blue" }),
+      H6.wall(17, 8, 3, { channel: "top", color: "green" }),
       O("gem", 5, 28, {}), O("gem", 19, 22, {}), O("gem", 12, 13, {}), O("gem", 14, 7, {}),
       O("portal", 11, 6, { w: 2 * T, h: 2 * T }),
     ],
@@ -554,7 +554,7 @@
       O("blink", 15, 14, { w: 2 * T, h: 14, period: 2.2, duty: 0.6, phase: 1.1 }),
       // 3) the boost-only lever unseals the summit
       O("switch", 11, 16, { channel: "g2", w: 22, h: 28, y: 17 * T - 28 }),
-      H10.wall(19, 5, 3, { channel: "g2", color: "blue" }),
+      H10.wall(19, 5, 3, { channel: "g2", color: "green" }),
       // 4) Nibihah's hidden symbol powers the portal itself
       O("secret", 8, 7, { channel: "g3", w: 24, h: 24, y: 8 * T - 24 }),
       // hazards throughout
@@ -604,9 +604,9 @@
     },
     spawns: [spawn(2, 14), spawn(3, 14)],
     objects: [
-      O("switch", 6, 15, { channel: "b1", colorLock: "blue", w: 22, h: 28, y: FLOOR_TOP - 28 }),
+      O("switch", 6, 15, { channel: "b1", colorLock: "green", w: 22, h: 28, y: FLOOR_TOP - 28 }),
       O("laser", 17, 1, { dir: "down", channel: "b1", invert: true, w: T, h: T }),
-      gate(20, { channel: "b1", color: "blue" }),
+      gate(20, { channel: "b1", color: "green" }),
       // a reflected beam high overhead — the ruins still remember their light
       O("laser", 8, 2, { dir: "right", w: T, h: T }),
       O("mirror", 33, 2, { orient: "/", w: T, h: T }),
@@ -625,8 +625,8 @@
     },
     spawns: [spawn(2, 14), spawn(3, 14)],
     objects: [
-      O("switch", 8, 10, { channel: "shop", colorLock: "green", w: 22, h: 28, y: 11 * T - 28 }),
-      gate(12, { channel: "shop", color: "green" }),
+      O("switch", 8, 10, { channel: "shop", colorLock: "blue", w: 22, h: 28, y: 11 * T - 28 }),
+      gate(12, { channel: "shop", color: "blue" }),
       O("bridge", 13, 14, { span: 5, lifetime: 12 }),   // Nichols rebuilds it
       spikes(14, 5),
       O("gem", 9, 10, {}), O("gem", 21, 14, {}), O("gem", 32, 11, {}),
@@ -710,7 +710,7 @@
     spawns: [spawn(2, 14), spawn(3, 14)],
     objects: [
       O("crate", 6, 15, {}),
-      O("switch", 9, 15, { channel: "l1", colorLock: "blue", w: 22, h: 28, y: FLOOR_TOP - 28 }),
+      O("switch", 9, 15, { channel: "l1", colorLock: "green", w: 22, h: 28, y: FLOOR_TOP - 28 }),
       O("laser", 14, 1, { dir: "down", channel: "l1", invert: true, w: T, h: T }),
       // this beam has no lever — park a crate under it to break the light
       O("laser", 19, 1, { dir: "down", w: T, h: T }),
@@ -792,9 +792,9 @@
     spawns: [spawn(2, 14), spawn(3, 14)],
     objects: [
       O("repair", 6, 15, { channel: "power", y: FLOOR_TOP - 30 }),
-      gate(11, { channel: "power", color: "blue" }),
+      gate(11, { channel: "power", color: "green" }),
       O("grapple", 24, 15, { channel: "hook", w: 22, h: 28, y: FLOOR_TOP - 28, range: 220 }),
-      gate(28, { channel: "hook", color: "blue" }),
+      gate(28, { channel: "hook", color: "green" }),
       O("crusher", 14, 2, { travel: 9 * T, axis: "y", period: 2.6 }),
       O("gem", 18, 11, {}), O("gem", 21, 14, {}), O("gem", 36, 10, {}),
       O("portal", 33, 9, { w: 2 * T, h: 2 * T }),
@@ -836,7 +836,7 @@
       O("timeswitch", 17, 15, { channel: "t", duration: 8, w: 24, h: 30, y: FLOOR_TOP - 30 }),
       gate(20, { channels: ["a", "t"] }),
       O("laser", 23, 1, { dir: "down", channel: "l", invert: true, w: T, h: T }),
-      O("switch", 21, 15, { channel: "l", colorLock: "green", w: 22, h: 28, y: FLOOR_TOP - 28 }),
+      O("switch", 21, 15, { channel: "l", colorLock: "blue", w: 22, h: 28, y: FLOOR_TOP - 28 }),
       O("blade", 25, 15, { x2: 30 * T, y2: 15 * T, speed: 100 }),
       O("secret", 26, 11, { channel: "s", w: 24, h: 24, y: 12 * T - 24 }),
       O("gem", 14, 12, {}), O("gem", 27, 11, {}), O("gem", 37, 8, {}),
