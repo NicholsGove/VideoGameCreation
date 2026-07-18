@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Echoes of Aether — Co-op Puzzle Platformer</title>
+  <!-- Game-style fonts (pixel headings + fantasy body). Loads when online;
+       falls back to the styled system stack in styles.css when offline. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=MedievalSharp&family=Cinzel:wght@600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- The game renders at native 1920x1080 (16:9); CSS scales it to fit. -->
+    <canvas id="game" width="1920" height="1080"></canvas>
+
+    <!-- DOM UI overlay (menus, HUD). Kept out of canvas for crisp text + a11y. -->
+    <div id="ui"></div>
+
+    <!-- Loading / boot message shown before scripts finish wiring up. -->
+    <div id="boot">Loading Echoes of Aether…</div>
+  </div>
+
+  <!--
+    Classic (non-module) scripts loaded in dependency order.
+    This deliberately avoids ES modules so the game runs by simply
+    double-clicking index.html (file://) with no build step or local server.
+    Everything attaches to a single global namespace: window.GG
+  -->
+
+  <!-- Optional: PeerJS for online co-op. Loaded from CDN; only needed for
+       online play. Local multiplayer works fully offline without it. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+
+  <!-- Core engine -->
+  <script src="src/core/utils.js"></script>
+  <script src="src/core/events.js"></script>
+  <script src="src/core/statemachine.js"></script>
+  <script src="src/core/input.js"></script>
+  <script src="src/core/storage.js"></script>
+  <script src="src/core/audio.js"></script>
+  <script src="src/core/camera.js"></script>
+  <script src="src/core/particles.js"></script>
+  <script src="src/core/weather.js"></script>
+
+  <!-- World + gameplay -->
+  <script src="src/world/objects.js"></script>
+  <script src="src/world/tilemap.js"></script>
+  <script src="src/world/levels.js"></script>
+  <script src="src/world/level.js"></script>
+  <script src="src/entities/player.js"></script>
+
+  <!-- Networking -->
+  <script src="src/net/network.js"></script>
+
+  <!-- Meta systems -->
+  <script src="src/core/achievements.js"></script>
+
+  <!-- UI -->
+  <script src="src/ui/title.js"></script>
+  <script src="src/ui/cutscene.js"></script>
+  <script src="src/ui/ui.js"></script>
+
+  <!-- Game controller + bootstrap -->
+  <script src="src/game.js"></script>
+  <script src="src/main.js"></script>
+</body>
+</html>
