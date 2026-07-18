@@ -210,6 +210,14 @@
       { paint: P.compass,     speaker: "",         text: "The two halves meet. They merge. The compass awakens…", dur: 4.5 },
       { paint: P.compass,     speaker: "The Compass", text: "\"Only together can you restore what has been broken.\"", dur: 5 },
     ],
+    ch2_end: [
+      { paint: P.ruinedWorld, speaker: "",        text: "Deep in the ruins they find murals — the Heart Engine, whole, and the hands that broke it.", dur: 5.5 },
+      { paint: P.heartWhole,  speaker: "Nibihah", text: "\"It didn't shatter on its own. Someone did this… on purpose.\"", dur: 5 },
+      { paint: P.ruinsAhead,  speaker: "Nichols", text: "\"Then whatever they were afraid of is still inside it. And we're about to wake it up.\"", dur: 5.5 },
+      { paint: P.hooded,      speaker: "",        text: "The hooded figure drops between them — and tears a recovered Aether Shard from its cradle.", dur: 5 },
+      { paint: P.shatter,     speaker: "",        text: "The theft breaks something old. Pillars split, the ceiling folds, and the ruins begin to come down.", dur: 5 },
+      { paint: P.escape,      speaker: "",        text: "They run. Together. And they make it out — one shard poorer, and far less alone than they began.", dur: 5.5 },
+    ],
     ch1_end: [
       { paint: P.escape,      speaker: "",         text: "Daylight at last. The heroes climb out of the caves — together, and no longer strangers.", dur: 5 },
       { paint: P.ruinsAhead,  speaker: "Nichols",  text: "\"The compass is pointing again… toward those ruins.\"", dur: 4.5 },
