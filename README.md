@@ -121,7 +121,7 @@ locked "in development" chapters), and **Chapter 1 is fully built and verified**
 | # | Chapter | Levels | Status |
 |---|---------|--------|--------|
 | 1 | Underground Caves | 1–10 | ✅ built |
-| 2 | Wrecked Ruins | 11–25 | scaffolded |
+| 2 | Wrecked Ruins | 11–25 | ✅ built |
 | 3 | Enchanted Forest | 26–40 | scaffolded |
 | 4 | The Great Temple | 41–50 | scaffolded |
 | 5 | Temple in the Sky | 51–60 | scaffolded |
@@ -156,6 +156,14 @@ drop when you walk beneath them.
 
 **Victory poses** scale with the level's difficulty tier — a celebration on
 normal levels, a doubled-over exhausted animation after an *extreme* one.
+
+**Chapter 2 — Wrecked Ruins** (15 levels) adds mirrors and laser galleries,
+**time switches** (clockwork levers that power a channel for a few seconds, so
+you must throw one and *run*), **rotating gear platforms** you ride across
+machine pits, elevator shafts, weighted cargo scales, collapsing archives and
+twin wall-jump chimneys. Level 20 hides a genuinely **boost-only chamber** — a
+sealed alcove whose perch a solo double jump cannot reach, verified by test.
+It ends with the hooded figure stealing a shard as the ruins come down.
 
 **Cinematics** — a fully scripted **Prologue** (the Heart Engine shatters; each
 hero finds a compass half; they meet and the compass awakens) plays before level
