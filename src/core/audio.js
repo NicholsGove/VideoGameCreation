@@ -98,6 +98,10 @@
         case "door":     this._tone("sfx", 180, 0.3, "sawtooth", 0.2, 90); break;
         case "gem":      this._tone("sfx", 880, 0.07, "sine", 0.25); this._tone("sfx", 1320, 0.12, "sine", 0.22); break;
         case "key":      this._tone("sfx", 990, 0.08, "triangle", 0.25, 1400); break;
+        // Nova's chirpy mrrp: a short rising sine with a crystalline tail.
+        case "mrrp":     this._tone("sfx", 700, 0.10, "sine", 0.18, 1150); this._tone("sfx", 1750, 0.18, "sine", 0.07); break;
+        // Pip's croak: a low descending saw with a wet click on top.
+        case "croak":    this._tone("sfx", 240, 0.14, "sawtooth", 0.18, 150); this._noise("sfx", 0.05, 0.08, 420); break;
         case "unlock":   this._tone("sfx", 660, 0.10, "square", 0.22); this._tone("sfx", 990, 0.16, "square", 0.2); break;
         case "death":    this._tone("sfx", 260, 0.4, "sawtooth", 0.28, 70); this._noise("sfx", 0.25, 0.2, 200); break;
         case "victory":  this._arp("voice", [523,659,784,1047], 0.12, 0.28); break;
@@ -169,6 +173,8 @@
       b.on("ui:confirm", () => this.sfx("uiconfirm"));
       b.on("ui:error", () => this.sfx("uierror"));
       b.on("achievement:unlocked", () => this.sfx("achieve"));
+      // Nova mrrps, Pip croaks — both mean "there's something hidden here".
+      b.on("pet:alert", (e) => this.sfx(e && e.kind === "frog" ? "croak" : "mrrp"));
     }
   }
 

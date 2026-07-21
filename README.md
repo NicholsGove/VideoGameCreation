@@ -83,9 +83,31 @@ pause. The menu is fully navigable by keyboard (arrows + Enter) or pad.
 | | Player 1 · Kiro | Player 2 · Lyra |
 |---|---|---|
 | Move / Jump | `W` `A` `S` `D` (or Pad 1) | `↑` `←` `↓` `→` (or Pad 2) |
-| Flip switch / repair / carry / throw | `S` | `↓` |
-| Special (grapple / dash) | `Q` | `Right Shift` |
-| Crawl (Nibihah) · drop through one-way | hold `S` | hold `↓` |
+| Flip switch / repair / carry / throw / cells | `S` | `↓` |
+| Special (grapple / telekinesis · swing / dash) | `Q` | `Right Shift` |
+| **Attack** (bolt gun · bow) | `E` | `.` |
+| Ping a spot | `F` | `/` |
+| Crawl (Nibihah) · brace · drop through one-way | hold `S` | hold `↓` |
+
+**Tutorials** — every level that introduces a mechanic now carries a floating
+parchment sign teaching it in-world, with key glyphs (how to swing, telekinesis,
+wall jumps, weapons, the boss, and more). All keys are rebindable, including
+Special and Attack.
+
+**Combat** — corruption-**rats** nest in scattered levels beyond 20: 4 hits to
+fell (health bar shown), they wander their nest, hunt you while healthy, and
+bolt when one hit from death. Once cleared they stay dead — unless both heroes
+fall, which lets the nest recover. Nichols fires a **bolt gun**, Nibihah a
+**bow** with arcing arrows.
+
+**The boss is now interactive**: the Celestial takes **40 hits** across **two
+waves** — at half health it starts teleporting across the arena on a 10-second
+cooldown. The three puzzle seals still matter: each one stuns it and tears off
+bonus damage. Weapons and puzzles win together.
+
+**Pets** — at the end of Chapter 2 the heroes are adopted by a small white
+**cat that trails rainbows** and a round little **frog that walks in falling
+stars**. They trot at their heroes' heels through every level from Chapter 3 on.
 
 `Esc` pause · `R` restart. All keys rebindable in **Settings → Controls**.
 Win rule: **both** heroes must stand on their matching exit pads at once.
@@ -126,10 +148,20 @@ locked "in development" chapters), and **Chapter 1 is fully built and verified**
 |---|---------|--------|--------|
 | 1 | Underground Caves | 1–10 | ✅ built |
 | 2 | Wrecked Ruins | 11–25 | ✅ built |
-| 3 | Enchanted Forest | 26–40 | scaffolded |
-| 4 | The Great Temple | 41–50 | scaffolded |
-| 5 | Temple in the Sky | 51–60 | scaffolded |
-| 6 | The Heavens | 61–70 | scaffolded |
+| 3 | Enchanted Forest | 26–40 | ✅ built |
+| 4 | The Great Temple | 41–50 | ✅ built |
+| 5 | Temple in the Sky | 51–60 | ✅ built |
+| 6 | The Heavens | 61–70 | ✅ built |
+
+**The campaign is complete: all 70 levels are built and machine-verified
+solvable.** Level 70 is the finale — the **Celestial**, a puzzle boss beaten by
+breaking three seals (a split rune verse, a ferried power cell, a tandem step)
+while dodging starfire and telegraphed floor beams; stone ledges shelter you.
+No combat: coordination is the weapon. Victory plays the full ending — the
+world healing, the guardians returning, *"years later"*, Nichols' proposal
+beneath the restored Heart Tree, the wedding, the kingdom at peace, a rising
+camera into the stars, the title card, and a post-credits teaser of a distant
+land.
 
 **Chapter 1 — Underground Caves** teaches exactly one idea per level, then
 combines them: 1 Movement · 2 Buttons · 3 Crates · 4 Keys & locks · 5 Colour

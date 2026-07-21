@@ -26,10 +26,14 @@
       canDash: false, canCrawl: false, canDetect: false,
       jumpScale: 1.0, maxJumps: 1, narrow: false, height: 30, climbGrip: 1.0,
       pal: {
-        skin: "#a56a43", skinShade: "#864f2f", hair: "#241812",
-        jacket: "#3a8a4a", jacketDark: "#255c31", pants: "#2c3446",
-        silver: "#c9d2e0", silverDark: "#8b95a8", belt: "#5a3a24",
-        boot: "#3a2a1a", accent: "#6ec27e", glowc: "#9bf0b8",
+        skin: "#b4784c", skinShade: "#8d5a36", skinLit: "#cf9163",
+        hair: "#2a1c14", hairLit: "#4a3423",
+        jacket: "#3f8f52", jacketDark: "#28603a", jacketLit: "#5fb374",
+        under: "#e8dcc0", pants: "#2f3a4e", pantsDark: "#222a3a",
+        silver: "#cfd8e6", silverDark: "#8b95a8", belt: "#6b4526", beltLit: "#8f6236",
+        boot: "#40301e", bootPlate: "#a8b2c4",
+        scarf: "#e0674f", scarfDark: "#b04434", scarfLit: "#f5917a",
+        eye: "#6ef0a0", accent: "#6ec27e", glowc: "#9bf0b8", crystal: "#7ef7c0",
       },
       blurb: "Immune to electricity · pushes heavy objects · repairs machines · activates GREEN mechanisms",
     },
@@ -45,10 +49,13 @@
       canDash: true, canCrawl: true, canDetect: true,        // explorer toolkit
       jumpScale: 1.02, maxJumps: 2, narrow: true, height: 24, climbGrip: 0.45,
       pal: {
-        skin: "#a56a43", skinShade: "#864f2f", hair: "#241812",
-        cape: "#3a6ea5", capeDark: "#274a72", cloth: "#4f86c6",
-        gold: "#ddb84a", goldDark: "#a3862f", belt: "#5a4324",
-        boot: "#3a2a1a", accent: "#7fb0e6", glowc: "#a9d4ff",
+        skin: "#b4784c", skinShade: "#8d5a36", skinLit: "#cf9163", hair: "#241812",
+        hairLit: "#3d2a1c",
+        cape: "#3f76ad", capeDark: "#28527c", capeLit: "#5f96cd",
+        cloth: "#4f86c6", under: "#dfe8f4", armor: "#b8c2d4", armorDark: "#7d8798",
+        gold: "#e8c65c", goldDark: "#a3862f", belt: "#6b4526",
+        boot: "#40301e", bootPlate: "#c4a24a",
+        eye: "#7fd4ff", accent: "#7fb0e6", glowc: "#a9d4ff", crystal: "#a9d4ff",
       },
       blurb: "Immune to poison · double-jump · fits through narrow passages · activates BLUE mechanisms",
     },
@@ -98,6 +105,12 @@
       this.pushing = false;           // set by Level when this hero is shoving something
       this.animName = "idle"; this.animTime = 0; this.blink = 0;
       this.celebrating = false;
+      // --- expression + idle personality ---
+      this.expr = "focused";          // drives eyebrows/mouth (see _face)
+      this._exprHold = 0;             // seconds an expression is locked in
+      this.idleVariant = 0;           // which little idle flourish is playing
+      this._idleTimer = 0;
+      this.hairWind = 0;              // hair reacts to speed (cosmetic only)
       // --- ability state ---
       this.fullH = this.character.height || 28;
       this.h = this.fullH;
@@ -176,10 +189,13 @@
       const canAir = wantJump && !this.onGround && this._coyote <= 0 && this.jumpsLeft > 0 && this.character.maxJumps > 1;
 
       if (canGround) {
-        // A partner standing on your head weighs you down: you can still jump,
-        // but noticeably lower. Keeps head-stacking useful without breaking it.
+        // A partner standing on your head weighs you down: you still jump,
+        // just noticeably lower — and your rider is carried up with you.
         const rider = level.players.find(q => q !== this && !q.dead && q.groundRef === this);
         this.vy = -JUMP_V * this.character.jumpScale * (rider ? 0.72 : 1);
+        // The rider rides the jump glued to the carrier's head (Level handles
+        // the stacked flight; loose velocities just make them collide mid-air).
+        if (rider) rider._stackedOn = this;
         this._buffer = 0; this._coyote = 0; this.onGround = false;
         this.jumpsLeft = this.character.maxJumps - 1; this.squash = 0.7;
         GG.bus.emit("player:jump", { index: this.index });
@@ -238,6 +254,11 @@
       this._wasGround = this.onGround;
       this._fallSpeed = this.vy;
 
+      // The airborne stack dissolves once the rider lands or drifts aside.
+      if (this._stackedOn && (this.onGround || Math.abs(this.cx - this._stackedOn.cx) > this.w + 8)) {
+        this._stackedOn = null;
+      }
+
       // Squash/stretch easing back to 1.
       this.squash = U.damp(this.squash, 1, 12, dt);
 
@@ -247,6 +268,68 @@
       if (this.animName !== prev) this.animTime = 0; else this.animTime += dt;
       this.blink -= dt;
       if (this.blink < -0.2 && Math.random() < 0.04) this.blink = 0.12;
+
+      // ---- personality: expressions + idle flourishes --------------------
+      this._exprHold = Math.max(0, this._exprHold - dt);
+      if (this.animName === "idle") {
+        this._idleTimer += dt;
+        if (this._idleTimer > 3.2) {            // pick a new little flourish
+          this._idleTimer = 0;
+          this.idleVariant = (this.idleVariant + 1 + ((Math.random() * 3) | 0)) % 5;
+        }
+      } else { this._idleTimer = 0; this.idleVariant = 0; }
+      if (this._exprHold <= 0) {
+        // read the world and feel something about it
+        const partner = level.players.find(q => q !== this);
+        const close = partner && !partner.dead && Math.hypot(partner.cx - this.cx, partner.cy - this.cy) < 70;
+        const danger = level.rats && level.rats.some(r => !r.deadRat && Math.hypot(r.cx - this.cx, r.cy - this.cy) < 120);
+        if (this.dead) this.expr = "sad";
+        else if (this.celebrating) this.expr = "laughing";
+        else if (danger) this.expr = "worried";
+        else if (this.pushing || this.teleHold) this.expr = "determined";
+        else if (this.swing || this.dashTime > 0) this.expr = "excited";
+        else if (!this.onGround) this.expr = "surprised";
+        else if (close && this.animName === "idle") this.expr = "happy";
+        else this.expr = "focused";
+      }
+
+      // ---- cloth & hair physics ------------------------------------------
+      this._stepCloth(dt);
+    }
+
+    /**
+     * Visual-only step (runs on host AND remote clients each frame).
+     * Capes/scarves were removed by request — only hair wind remains.
+     */
+    _stepCloth(dt) {
+      this.hairWind = U.damp(this.hairWind, -this.vx * 0.05, 6, dt);
+    }
+
+    /** Momentary expression override (used by events + cutscenes). */
+    feel(expr, seconds) { this.expr = expr; this._exprHold = seconds || 1.2; }
+
+    /**
+     * Faces are intentionally left FEATURELESS — no eyes, no brows, no mouth.
+     * At this sprite scale the drawn eyes read as unsettling rather than
+     * expressive, so mood is carried entirely by pose, cloth motion and the
+     * small floating cues below. `this.expr` still drives everything else and
+     * is kept live so faces could be reinstated in one place if ever wanted.
+     */
+    _face(ctx, hx, headY, hh, W, pal, st) {
+      const t = this.animTime;
+      if (this.expr === "confused") {                            // floating "?"
+        ctx.save();
+        ctx.translate(W * 0.24 + hx, headY - 3);
+        ctx.scale(this.facing, 1);                               // keep it readable when facing left
+        ctx.fillStyle = pal.glowc; ctx.globalAlpha = 0.8 + Math.sin(t * 4) * 0.2;
+        ctx.font = "bold 7px monospace"; ctx.fillText("?", 0, 0);
+        ctx.restore();
+      }
+      if (this.expr === "exhausted") {                           // sweat bead
+        ctx.fillStyle = "#9fd8ff"; ctx.globalAlpha = 0.85;
+        ctx.beginPath(); ctx.arc(W * 0.22 + hx, headY + 3 + ((t * 14) % 7), 1.3, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
     }
 
     // ---- Abilities -------------------------------------------------------
@@ -295,9 +378,9 @@
           if (inp.action && this._carryCool <= 0) this.charge = Math.min(1, this.charge + CHARGE_RATE * dt);
           else if (!inp.action && this.charge > 0.02) this._release(level);
         } else if (inp.action && this._carryCool <= 0) {
-          // pick up an adjacent crate
+          // pick up an adjacent crate (telekinetic cubes answer to the mind, not the hands)
           for (const c of level.crates) {
-            if (c.carried || c.thrown) continue;
+            if (c.carried || c.thrown || c.tele) continue;
             const near = Math.abs(c.cx - this.cx) < this.w + 10 && Math.abs(c.cy - this.cy) < this.h;
             if (near) { this.carrying = c; c.carried = this; this._carryCool = 0.3; this.charge = 0; GG.bus.emit("crate:push", {}); break; }
           }
@@ -391,96 +474,95 @@
       ctx.translate(0, -bob + crouch * 0.4);
       ctx.rotate((lean * (st === "climb" ? 0 : 1)) * Math.PI / 180 * 0.4);
 
-      const H = p.h, W = p.w;
-      const legY = 0, hipY = -H * 0.42, chestY = -H * 0.62, headY = -H * 0.80;
-
-      // === LEGS ===
-      const legOff = legPhase * (st === "run" ? 5 : st === "walk" ? 3.5 : 1.5);
-      const drawLeg = (dx, swing) => {
-        ctx.fillStyle = pal.pants || pal.cloth || ch.dark;
-        ctx.fillRect(dx - 2, hipY, 4, H * 0.30);
-        ctx.fillStyle = pal.boot; // climbing boots
-        ctx.fillRect(dx - 2.5, legY - 4 - crouch * 0.2, 5, 5);
-      };
-      if (st === "defeated") {
-        ctx.fillStyle = pal.boot; ctx.fillRect(-6, -4, 6, 4); ctx.fillRect(2, -3, 6, 3);
-      } else {
-        drawLeg(-3 + legOff * 0.6, legOff); drawLeg(3 - legOff * 0.6, -legOff);
-      }
-
-      // === TORSO (jacket / cape) ===
       const isN = ch.id === "nichols";
-      if (isN) {
-        // Nichols: explorer jacket (blue) + utility belt + backpack
-        ctx.fillStyle = pal.jacket; ctx.fillRect(-W * 0.34, chestY, W * 0.68, H * 0.30);
-        ctx.fillStyle = pal.jacketDark; ctx.fillRect(-W * 0.34, chestY, W * 0.20, H * 0.30); // shade
-        ctx.fillStyle = pal.belt; ctx.fillRect(-W * 0.34, hipY - 3, W * 0.68, 3);
-        ctx.fillStyle = pal.silver; ctx.fillRect(-1, hipY - 3, 3, 3); // buckle
-        // small backpack behind (drawn at back = -x)
-        ctx.fillStyle = pal.jacketDark; ctx.fillRect(-W * 0.42, chestY + 3, 5, H * 0.22);
-        ctx.fillStyle = pal.silverDark; ctx.fillRect(-W * 0.42, chestY + 6, 5, 2);
-      } else {
-        // Nibihah: light outfit + hooded cape (behind) + gold trim + satchel
-        ctx.fillStyle = pal.capeDark; ctx.fillRect(-W * 0.46, chestY - 1, 6, H * 0.42 + reach * 0.1); // cape flowing back
-        ctx.fillStyle = pal.cloth; ctx.fillRect(-W * 0.30, chestY, W * 0.60, H * 0.30);
-        ctx.fillStyle = pal.gold; ctx.fillRect(-W * 0.30, hipY - 2, W * 0.60, 2); // sash
-        ctx.fillStyle = pal.goldDark; ctx.fillRect(-2, chestY + 2, 4, H * 0.24); // knee-guard glint / center line
-        // satchel across body
-        ctx.fillStyle = pal.belt; ctx.fillRect(W * 0.10, chestY + 4, 6, 6);
-        ctx.fillStyle = pal.gold; ctx.fillRect(W * 0.10, chestY + 4, 6, 1);
+      // Visual proportions only — the physics hitbox stays p.w × p.h.
+      // Nibihah is shorter (24px) with the same 22px hitbox, which drew her
+      // nearly square; a slimmer visual width restores an athletic build.
+      const H = p.h, W = p.w * (isN ? 1 : 0.78);
+      const legY = 0, hipY = -H * 0.42, chestY = -H * 0.64, headY = -H * 0.84;
+      const legW = isN ? 5 : 3.8, legX = isN ? 3.5 : 2.8;   // leg thickness / stance
+
+      // ---- idle flourishes give each hero a little personality ----------
+      let wrenchSpin = 0, gloveTug = 0, compass = 0, lookAbout = 0, twirl = 0, hairTuck = 0, dust = 0;
+      if (st === "idle") {
+        const v = this.idleVariant, ph = Math.min(1, this._idleTimer / 1.6);
+        const swell = Math.sin(ph * Math.PI);                 // ease in and out
+        if (isN) {
+          if (v === 0) gloveTug = swell; else if (v === 1) wrenchSpin = swell;
+          else if (v === 2) compass = swell; else if (v === 3) lookAbout = swell;
+        } else {
+          // twirls a crystal / tucks a strand of hair back / brushes off dust
+          if (v === 0) twirl = swell; else if (v === 1) hairTuck = swell;
+          else if (v === 2) dust = swell; else if (v === 3) lookAbout = swell;
+        }
       }
 
-      // === ARMS ===
-      const armY = chestY + 3;
+      // === BODY — the player's Figma sprite, drawn 1:1 =================
+      // Art comes from GG.SPRITES (imported from the Figma file) and is
+      // scaled so the sprite's full height fits the physics hitbox. The
+      // rect groups tagged in the data get procedural motion: legs swing
+      // with the run cycle, arms lift for flourishes, the braid sways,
+      // hair spikes lean in the wind, and eyes squash shut on blinks.
+      const spr = GG.SPRITES && GG.SPRITES[ch.id];
+      const legOff = legPhase * (st === "run" ? 5 : st === "walk" ? 3.5 : 1.5);
       const swing = armSwing + armFwd;
-      // back arm
-      ctx.fillStyle = isN ? pal.jacketDark : pal.capeDark;
-      ctx.fillRect(-W * 0.30 - 1, armY - (armUp) - reach, 3, H * 0.22 + Math.abs(swing) * 0.2);
-      // front arm / gauntlet
-      if (isN) {
-        // mechanical gauntlet (silver, glowing) on the front arm
-        ctx.fillStyle = pal.skin; ctx.fillRect(W * 0.24, armY - armUp - reach, 3, H * 0.12);
-        ctx.fillStyle = pal.silver;
-        ctx.fillRect(W * 0.22, armY - armUp - reach + H * 0.10, 5, H * 0.14 + swing * 0.2);
-        ctx.fillStyle = pal.glowc; ctx.shadowBlur = 6; ctx.shadowColor = pal.glowc;
-        ctx.fillRect(W * 0.235, armY - armUp - reach + H * 0.13, 2.5, 3);
-        ctx.shadowBlur = 0;
-      } else {
-        ctx.fillStyle = pal.skin;
-        ctx.fillRect(W * 0.24, armY - armUp - reach, 3, H * 0.22 + swing * 0.2);
-        ctx.fillStyle = pal.gold; ctx.fillRect(W * 0.235, armY - armUp - reach + H * 0.10, 4, 2); // bracer
+      const wind = U.clamp(this.hairWind * 0.4 + Math.sin(t * 2.2) * 0.6, -2, 2);
+      const armLift = armUp + reach + twirl * 6 + hairTuck * 7 + gloveTug * 2;
+      const hx = (st === "run" || st === "push" ? lean * 0.4 : 0) + lookAbout * Math.sin(t * 2) * 2;
+      const hh = H * 0.22;
+
+      // Drawn 20% larger than the hitbox so the heroes clearly tower over
+      // their pets; physics/collision still use the untouched p.w × p.h box.
+      const VS = 1.2;
+      if (spr) {
+        GG.drawSprite(ctx, spr, 0, 0, H * VS, 1, {
+          legOff: legOff * 0.6,
+          armLift, swing,
+          braidSway: Math.sin(t * 3) * 1.2 - wind * 0.5,
+          hairLean: wind,
+          blink: this.blink,
+          t,
+        });
+
+        // idle flourish props appear at the sprite's arm anchor
+        if (spr.armAnchor && (wrenchSpin > 0 || compass > 0 || twirl > 0 || dust > 0)) {
+          const S2 = (H * VS) / spr.h;
+          const ax = (spr.armAnchor.x - spr.w / 2) * S2;
+          const ay = (spr.armAnchor.y - spr.h) * S2 - armLift;
+          if (wrenchSpin > 0) {                              // spins a wrench
+            ctx.save(); ctx.translate(ax, ay + 5); ctx.rotate(t * 9);
+            ctx.fillStyle = pal.silver || "#cfd8e6";
+            ctx.fillRect(-1, -5, 2, 10); ctx.fillRect(-2.5, -6, 5, 2.5);
+            ctx.restore();
+          }
+          if (compass > 0) {                                 // studies the compass
+            ctx.fillStyle = pal.gold || "#e8c65c";
+            ctx.beginPath(); ctx.arc(ax + 1, ay + 6, 4, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = pal.crystal || "#7ef7c0"; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(ax + 1, ay + 6);
+            ctx.lineTo(ax + 1 + Math.cos(t * 2) * 3, ay + 6 + Math.sin(t * 2) * 3); ctx.stroke();
+          }
+          if (twirl > 0) {                                   // twirls a crystal
+            ctx.save(); ctx.translate(ax + 1, ay - 5); ctx.rotate(t * 7);
+            ctx.fillStyle = pal.crystal || "#a9d4ff"; ctx.shadowBlur = 10; ctx.shadowColor = pal.glowc;
+            ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(3, 0); ctx.lineTo(0, 4); ctx.lineTo(-3, 0); ctx.fill();
+            ctx.shadowBlur = 0; ctx.restore();
+          }
+          if (dust > 0) {                                    // brushes off dust
+            ctx.globalAlpha = dust * 0.6; ctx.fillStyle = "#cdb488";
+            for (let i = 0; i < 4; i++) ctx.fillRect(ax - 6 + i * 3, ay + 8 + Math.sin(t * 8 + i) * 2, 1.5, 1.5);
+            ctx.globalAlpha = 1;
+          }
+        }
       }
 
-      // === HEAD ===
-      const hx = st === "run" || st === "push" ? lean * 0.4 : 0;
-      // neck/skin
-      ctx.fillStyle = pal.skin; ctx.fillRect(-W * 0.20 + hx, headY, W * 0.40, H * 0.20);
-      ctx.fillStyle = pal.skinShade; ctx.fillRect(-W * 0.20 + hx, headY, W * 0.12, H * 0.20); // face shade (back)
-      // hair / hood
-      if (isN) {
-        ctx.fillStyle = pal.hair; // short dark hair
-        ctx.fillRect(-W * 0.22 + hx, headY - 2, W * 0.44, 5);
-        ctx.fillRect(-W * 0.22 + hx, headY - 2, 4, H * 0.12);
-      } else {
-        // hooded cape up + long braid trailing back
-        ctx.fillStyle = pal.capeDark; ctx.fillRect(-W * 0.24 + hx, headY - 3, W * 0.48, 5);
-        ctx.fillStyle = pal.hair; ctx.fillRect(-W * 0.30 + hx, headY + 2, 4, H * 0.30 + Math.sin(t * 6) * 1.5); // braid down the back
-        ctx.fillStyle = pal.gold; ctx.fillRect(-W * 0.24 + hx, headY - 3, W * 0.48, 1.5); // hood trim
-      }
-      // eye (facing forward), blink
-      if (st !== "defeated") {
-        ctx.fillStyle = "#0b0e18";
-        if (this.blink > 0) ctx.fillRect(W * 0.10 + hx, headY + 7, 4, 1);
-        else ctx.fillRect(W * 0.12 + hx, headY + 5, 3, 4);
-      } else {
-        ctx.strokeStyle = "#0b0e18"; ctx.lineWidth = 1; // x_x eyes
-        ctx.beginPath(); ctx.moveTo(W*0.06+hx, headY+5); ctx.lineTo(W*0.14+hx, headY+9); ctx.moveTo(W*0.14+hx, headY+5); ctx.lineTo(W*0.06+hx, headY+9); ctx.stroke();
-      }
+      // === FACE EXTRAS (floating "?" / sweat bead) ====================
+      this._face(ctx, hx, headY, hh, W, pal, st);
 
       // celebrate sparkles
       if (st === "celebrate") {
         ctx.fillStyle = pal.glowc; ctx.shadowBlur = 6; ctx.shadowColor = pal.glowc;
-        for (let i = 0; i < 3; i++) { const a = t * 4 + i * 2.1; ctx.fillRect(Math.cos(a) * 12, headY - 6 + Math.sin(a) * 6, 2, 2); }
+        for (let i = 0; i < 3; i++) { const a = t * 4 + i * 2.1; ctx.fillRect(Math.cos(a) * 12, headY - 8 + Math.sin(a) * 6, 2, 2); }
         ctx.shadowBlur = 0;
       }
 

@@ -210,6 +210,50 @@
       { paint: P.compass,     speaker: "",         text: "The two halves meet. They merge. The compass awakens…", dur: 4.5 },
       { paint: P.compass,     speaker: "The Compass", text: "\"Only together can you restore what has been broken.\"", dur: 5 },
     ],
+    ch6_end: [
+      { paint: P.heartWhole,  speaker: "", text: "The Compass turns. The Heart Engine drinks its light — and beats, whole, for the first time in a thousand years.", dur: 6 },
+      { paint: (c, t) => { P.sky(c, t, "#2a3f6a", "#9fd8a0"); P.hills(c, "#2f704a", 400, 90, 20); c.fillStyle = "#4fae5f"; for (let i = 0; i < 8; i++) c.fillRect(90 + i * 105, 330 - (i % 3) * 24, 26, 130); },
+        speaker: "", text: "And the world begins to heal. Ruins knit themselves whole. Forests bloom where ash lay. The sky reaches down and takes the earth's hand.", dur: 7 },
+      { paint: (c, t) => { P.sky(c, t, "#2a3f6a", "#9fd8a0"); P.hills(c, "#2f704a", 420, 80, 40); for (let i = 0; i < 4; i++) { const x = 160 + i * 190; c.fillStyle = "#0a0710"; c.beginPath(); c.moveTo(x, 360); c.quadraticCurveTo(x + 22, 390, x + 16, 440); c.lineTo(x - 16, 440); c.quadraticCurveTo(x - 22, 390, x, 360); c.fill(); c.fillStyle = "#9bf0b8"; c.fillRect(x - 6, 384, 4, 3); c.fillRect(x + 2, 384, 4, 3); } },
+        speaker: "", text: "The ancient guardians return to their posts — hoods lowered, eyes green with borrowed spring.", dur: 6 },
+      { paint: (c, t) => { P.sky(c, t, "#1a2450", "#e8a86a"); c.textAlign = "center"; c.fillStyle = "#f6ecd2"; c.font = "700 26px 'Cinzel', serif"; c.fillText("Years later…", 480, 270); c.textAlign = "left"; },
+        speaker: "", text: "", dur: 3.5 },
+      { paint: (c, t) => { P.sky(c, t, "#2a3f6a", "#f0c07a"); P.hills(c, "#2f704a", 430, 70, 10); c.fillStyle = "#5a3a24"; c.fillRect(462, 250, 36, 200); c.fillStyle = "#4fae5f"; c.beginPath(); c.arc(480, 220, 90, 0, Math.PI * 2); c.fill(); c.save(); c.globalCompositeOperation = "lighter"; const g = c.createRadialGradient(480, 250, 4, 480, 250, 60); g.addColorStop(0, "rgba(255,220,240,0.9)"); g.addColorStop(1, "rgba(0,0,0,0)"); c.fillStyle = g; c.beginPath(); c.arc(480, 250, 60, 0, Math.PI * 2); c.fill(); c.restore(); GG.cutscene._hero(c, 0, 430, 470, "push", t, 1); GG.cutscene._hero(c, 1, 500, 470, "idle", t, -1); },
+        speaker: "Nichols", text: "Beneath the restored Heart Tree, an inventor goes down on one knee. \"Nibihah… every door we ever opened, we opened together. Marry me?\"", dur: 7 },
+      { paint: (c, t) => { P.sky(c, t, "#2a3f6a", "#f0c07a"); P.hills(c, "#2f704a", 430, 70, 10); GG.cutscene._hero(c, 0, 445, 470, "celebrate", t, 1); GG.cutscene._hero(c, 1, 505, 470, "celebrate", t, -1); c.save(); c.globalCompositeOperation = "lighter"; for (let i = 0; i < 24; i++) { const a = t * 2 + i; c.fillStyle = i % 2 ? "#f2c14e" : "#ff9ac4"; c.fillRect(480 + Math.cos(a) * (40 + i * 9), 300 + Math.sin(a * 1.3) * 80 + i * 4, 3, 3); } c.restore(); },
+        speaker: "Nibihah", text: "\"…You already know the rune I'd step on. YES.\"", dur: 5 },
+      { paint: (c, t) => { P.sky(c, t, "#2a3f6a", "#f0c07a"); P.hills(c, "#2f704a", 440, 60, 30); for (let i = 0; i < 9; i++) { const x = 120 + i * 90; if (i === 4 || i === 5) continue; c.fillStyle = i % 3 === 0 ? "#0a0710" : "#5a4324"; c.fillRect(x, 420, 20, 46); c.fillStyle = "#a56a43"; c.beginPath(); c.arc(x + 10, 414, 8, 0, Math.PI * 2); c.fill(); } GG.cutscene._hero(c, 0, 450, 470, "celebrate", t, 1); GG.cutscene._hero(c, 1, 505, 470, "celebrate", t, -1); c.save(); c.globalCompositeOperation = "lighter"; for (let i = 0; i < 30; i++) { c.fillStyle = ["#f2c14e", "#ff9ac4", "#9bf0b8", "#a9d4ff"][i % 4]; c.fillRect((i * 61 + t * 40) % 960, ((i * 37 + t * 55) % 300) + 120, 3, 3); } c.restore(); },
+        speaker: "", text: "Friends, villagers and guardians gather beneath the blossoms. The wedding lasts three days, and nobody solves a single puzzle alone.", dur: 7 },
+      { paint: (c, t) => { P.sky(c, t, "#2a3f6a", "#9fd8a0"); P.hills(c, "#2f704a", 430, 80, 20); c.fillStyle = "#c9d2e0"; c.fillRect(700, 330, 60, 120); c.fillRect(180, 350, 50, 100); GG.cutscene._hero(c, 0, 452, 470, "idle", t, 1); GG.cutscene._hero(c, 1, 492, 470, "idle", t, -1); GG.cutscene._hero(c, 1, 300 + Math.sin(t * 3) * 40, 470, "run", t, Math.sin(t * 3) > 0 ? 1 : -1); },
+        speaker: "", text: "The kingdom stands rebuilt. Children race where the corruption once crept. The skies are quiet, and kind.", dur: 6 },
+      { paint: (c, t) => { const rise = Math.min(1, t / 5); P.sky(c, t, "#1a2450", "#2a3f6a"); c.save(); c.translate(0, rise * 220); P.hills(c, "#2f704a", 430, 80, 20); GG.cutscene._hero(c, 0, 452, 470, "idle", t, 1); GG.cutscene._hero(c, 1, 492, 470, "idle", t, -1); c.restore(); P.stars(c, t, Math.floor(rise * 80)); c.fillStyle = `rgba(5,4,10,${rise * 0.5})`; c.fillRect(0, 0, 960, 540); },
+        speaker: "", text: "The camera rises — past the Heart Tree, past the floating isles, into the healed and starlit dark.", dur: 6 },
+      { paint: (c, t) => { P.sky(c, t, "#05040a", "#0b1020"); P.stars(c, t); c.textAlign = "center"; c.fillStyle = "#f2c14e"; c.font = "800 34px 'Cinzel', serif"; c.shadowBlur = 20; c.shadowColor = "#f2c14e"; c.fillText("ECHOES OF AETHER", 480, 250); c.shadowBlur = 0; c.fillStyle = "#cdb488"; c.font = "15px 'MedievalSharp', serif"; c.fillText("for Nichols & Nibihah — who never let go", 480, 290); c.font = "12px 'Segoe UI', sans-serif"; c.fillStyle = "#8f9ac2"; c.fillText("design · code · art · music — made together", 480, 330); c.textAlign = "left"; },
+        speaker: "", text: "", dur: 6 },
+      { paint: (c, t) => { P.sky(c, t, "#05040a", "#101838"); P.stars(c, t, 50); P.hills(c, "#0a0f1e", 460, 50, 70); c.save(); c.globalAlpha = 0.5 + Math.sin(t * 2) * 0.2; c.fillStyle = "#c07bff"; c.shadowBlur = 16; c.shadowColor = "#c07bff"; c.beginPath(); c.arc(820, 180, 5, 0, Math.PI * 2); c.fill(); c.restore(); },
+        speaker: "???", text: "…and far beyond the sea of clouds, over a land no compass has ever pointed to — a second star blinks awake.", dur: 7 },
+    ],
+    ch4_end: [
+      { paint: P.compass,    speaker: "",        text: "The temple's trials are passed. Deep below, ancient counterweights begin to move as one.", dur: 5 },
+      { paint: P.shatter,    speaker: "Nichols", text: "\"Do you feel that? The whole temple is… lifting.\"", dur: 4.5 },
+      { paint: (c, t) => { P.sky(c, t, "#182448", "#7fb0ff"); P.hills(c, "#241d38", 480, 60, 30); c.save(); c.translate(0, Math.max(-160, -t * 30)); P.hills(c, "#2a2340", 420, 90, 10); c.fillStyle = "#3a3057"; c.fillRect(340, 260, 280, 200); c.restore(); },
+        speaker: "", text: "Stone by stone, the Great Temple rises into the sky — carrying the heroes with it.", dur: 6 },
+    ],
+    ch5_end: [
+      { paint: (c, t) => { P.sky(c, t, "#182448", "#7fb0ff"); GG.cutscene._hero(c, 0, 380, 470, "idle", t, 1); GG.cutscene._hero(c, 1, 460, 470, "idle", t, -1); P.half(c, 480, 250 + Math.sin(t * 2) * 5, "#f2c14e", 1); },
+        speaker: "", text: "The final Aether Shard. After everything — every fall, every catch — the Compass is whole.", dur: 5.5 },
+      { paint: P.hooded,     speaker: "",        text: "And the hooded figure steps from the light at last… lowering their hood.", dur: 5 },
+      { paint: P.hooded,     speaker: "The Guardian", text: "\"I am the last Guardian of the Heart Engine. I broke it — because something is imprisoned inside.\"", dur: 6 },
+      { paint: P.heartWhole, speaker: "The Guardian", text: "\"Restore it, and you wake what sleeps within. Walk away, and the world stays broken. Choose.\"", dur: 6 },
+      { paint: P.compass,    speaker: "Nibihah", text: "\"We've carried each other this far. We choose hope — together.\"", dur: 5.5 },
+    ],
+    ch3_end: [
+      { paint: (c, t) => { P.sky(c, t, "#0c2413", "#3a6a2a"); P.hills(c, "#12301c", 440, 90, 20); GG.cutscene._hero(c, 0, 400, 470, "idle", t, 1); GG.cutscene._hero(c, 1, 480, 470, "idle", t, -1); },
+        speaker: "", text: "The corrupted groves breathe again. The forest spirits circle the heroes — and approve.", dur: 5.5 },
+      { paint: (c, t) => { P.sky(c, t, "#0c2413", "#3a6a2a"); P.hills(c, "#12301c", 440, 90, 20); P.half(c, 480, 260 + Math.sin(t * 2) * 6, "#f2c14e", 1); GG.cutscene._hero(c, 0, 400, 470, "celebrate", t, 1); GG.cutscene._hero(c, 1, 540, 470, "celebrate", t, -1); },
+        speaker: "The Forest Guardian", text: "\"You move as one. Carry our shard — and our hope — to the Great Temple.\"", dur: 5.5 },
+      { paint: P.ruinsAhead, speaker: "Nibihah", text: "\"The temple gates are opening… it knew we were coming.\"", dur: 5 },
+    ],
     ch2_end: [
       { paint: P.ruinedWorld, speaker: "",        text: "Deep in the ruins they find murals — the Heart Engine, whole, and the hands that broke it.", dur: 5.5 },
       { paint: P.heartWhole,  speaker: "Nibihah", text: "\"It didn't shatter on its own. Someone did this… on purpose.\"", dur: 5 },
@@ -217,6 +261,31 @@
       { paint: P.hooded,      speaker: "",        text: "The hooded figure drops between them — and tears a recovered Aether Shard from its cradle.", dur: 5 },
       { paint: P.shatter,     speaker: "",        text: "The theft breaks something old. Pillars split, the ceiling folds, and the ruins begin to come down.", dur: 5 },
       { paint: P.escape,      speaker: "",        text: "They run. Together. And they make it out — one shard poorer, and far less alone than they began.", dur: 5.5 },
+      { paint: (c, t) => { P.sky(c, t, "#141a2c", "#e8b86a"); P.hills(c, "#1a1428", 460, 50, 20);
+          GG.cutscene._hero(c, 0, 380, 470, "idle", t, 1); GG.cutscene._hero(c, 1, 560, 470, "idle", t, -1);
+          // the little white cat
+          c.save(); c.translate(440, 462);
+          c.fillStyle = "#f0e6da"; c.beginPath(); c.ellipse(0, 6, 8, 5, 0, 0, Math.PI * 2); c.fill();
+          c.beginPath(); c.arc(7, 1, 4.5, 0, Math.PI * 2); c.fill();
+          c.beginPath(); c.moveTo(5, -2); c.lineTo(6, -7); c.lineTo(8, -2); c.moveTo(8, -2); c.lineTo(10, -6); c.lineTo(11, -1); c.fill();
+          c.strokeStyle = "#f0e6da"; c.lineWidth = 2; c.beginPath(); c.moveTo(-7, 5); c.quadraticCurveTo(-14, Math.sin(t * 4) * 4, -13, -4); c.stroke();
+          c.fillStyle = "#4fc3ff"; c.fillRect(7, 0, 2, 2); c.restore();
+          // rainbow wisps behind it
+          const rb = ["#ff6b6b", "#ffb14d", "#f2e14e", "#6ef0a0", "#4fc3ff", "#c07bff"];
+          c.save(); c.globalCompositeOperation = "lighter";
+          for (let i = 0; i < 6; i++) { c.fillStyle = rb[i]; c.globalAlpha = 0.6; c.fillRect(420 - i * 7, 466 + Math.sin(t * 3 + i) * 2, 4, 3); }
+          c.restore(); c.globalAlpha = 1;
+          // the little frog
+          c.save(); c.translate(520, 464 + Math.abs(Math.sin(t * 5)) * -8);
+          c.fillStyle = "#5fae4f"; c.beginPath(); c.ellipse(0, 5, 7, 4.5, 0, 0, Math.PI * 2); c.fill();
+          c.fillStyle = "#fff"; c.beginPath(); c.arc(-2, -2, 2.4, 0, Math.PI * 2); c.arc(2, -2, 2.4, 0, Math.PI * 2); c.fill();
+          c.fillStyle = "#1a1220"; c.fillRect(-2.8, -2.8, 1.7, 1.7); c.fillRect(1.2, -2.8, 1.7, 1.7); c.restore();
+          // star twinkles behind it
+          c.save(); c.globalCompositeOperation = "lighter";
+          for (let i = 0; i < 5; i++) { c.fillStyle = i % 2 ? "#fff" : "#f2c14e"; c.globalAlpha = 0.5 + Math.sin(t * 4 + i) * 0.4; c.fillRect(540 + i * 8, 460 + Math.sin(t * 2 + i * 2) * 4, 2.5, 2.5); }
+          c.restore(); c.globalAlpha = 1;
+        },
+        speaker: "", text: "In the rubble, two small survivors find THEM: a white cat trailing rainbows, and a round little frog that walks in falling stars. They refuse to be left behind.", dur: 7 },
     ],
     ch1_end: [
       { paint: P.escape,      speaker: "",         text: "Daylight at last. The heroes climb out of the caves — together, and no longer strangers.", dur: 5 },

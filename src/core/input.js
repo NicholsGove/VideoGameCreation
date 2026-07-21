@@ -11,9 +11,10 @@
 
   // Default bindings. Player 0 = WASD, Player 1 = Arrow keys.
   const DEFAULT_BINDINGS = {
-    // `special` = Nichols' grapple / Nibihah's mid-air dash.
-    p0: { left: "KeyA", right: "KeyD", up: "KeyW", down: "KeyS", action: "KeyS", special: "KeyQ" },
-    p1: { left: "ArrowLeft", right: "ArrowRight", up: "ArrowUp", down: "ArrowDown", action: "ArrowDown", special: "ShiftRight" },
+    // `special` = grapple/telekinesis (Nichols) or swing/dash (Nibihah).
+    // `attack`  = Nichols' bolt gun / Nibihah's bow.
+    p0: { left: "KeyA", right: "KeyD", up: "KeyW", down: "KeyS", action: "KeyS", special: "KeyQ", attack: "KeyE" },
+    p1: { left: "ArrowLeft", right: "ArrowRight", up: "ArrowUp", down: "ArrowDown", action: "ArrowDown", special: "ShiftRight", attack: "Period" },
   };
   // Global (non-player) keys.
   const GLOBAL_KEYS = { pause: "Escape", restart: "KeyR", confirm: "Enter" };
@@ -98,6 +99,7 @@
         action: this.action(p, "action") || !!pad.action,
         special: this.action(p, "special") || !!pad.special,
         specialPressed: this.actionPressed(p, "special") || !!pad.specialPressed,
+        attackPressed: this.actionPressed(p, "attack") || !!pad.attackPressed,
       };
     }
 
@@ -116,20 +118,22 @@
         const b = gp.buttons.map(x => x.pressed);
         const ax = gp.axes;
         const jump = !!(b[0]);                        // A / cross
-        const special = !!(b[3] || b[5]);             // Y / RB -> dash / grapple
-        const prevJump = this._padPrev[i].jump, prevSpecial = this._padPrev[i].special;
+        const special = !!(b[3] || b[5]);             // Y / RB -> dash / grapple / tele / swing
+        const attack = !!(b[1] || b[7]);              // B / RT -> weapon fire
+        const prevJump = this._padPrev[i].jump, prevSpecial = this._padPrev[i].special, prevAttack = this._padPrev[i].attack;
         const st = {
           left: b[14] || ax[0] < -0.4,
           right: b[15] || ax[0] > 0.4,
           up: b[12] || ax[1] < -0.4,
           down: b[13] || ax[1] > 0.4,
           jump, jumpPressed: jump && !prevJump,
-          action: !!(b[2] || b[1]),                   // X/B
+          action: !!b[2],                             // X
           special, specialPressed: special && !prevSpecial,
+          attackPressed: attack && !prevAttack,
           start: !!b[9],
         };
         this.pads[i] = st;
-        this._padPrev[i] = { jump, special };
+        this._padPrev[i] = { jump, special, attack };
         if (b.some(x => x) || Math.abs(ax[0]) > 0.3 || Math.abs(ax[1]) > 0.3) this.lastDevice = "gamepad";
         // Player-1 pad drives menu navigation + Start = pause.
         if (i === 0) {

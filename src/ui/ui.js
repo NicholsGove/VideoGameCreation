@@ -162,6 +162,9 @@
           <div class="divider"></div>
           <div class="row between"><span>Player 1 (Nichols)</span><span><span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> / Pad 1</span></div>
           <div class="row between"><span>Player 2 (Nibihah)</span><span><span class="kbd">▲</span><span class="kbd">◄</span><span class="kbd">▼</span><span class="kbd">►</span> / Pad 2</span></div>
+          <div class="row between"><span>Special (grapple/tele · swing/dash)</span><span><span class="kbd">Q</span> · <span class="kbd">R-Shift</span></span></div>
+          <div class="row between"><span>Attack (bolt gun · bow)</span><span><span class="kbd">E</span> · <span class="kbd">.</span></span></div>
+          <div class="row between"><span>Ping a spot</span><span><span class="kbd">F</span> · <span class="kbd">/</span></span></div>
           <div class="row between"><span>Pause · Restart</span><span><span class="kbd">Esc</span>/Start <span class="kbd">R</span></span></div>
           <div class="back-row"><button class="btn" data-a="back">Back</button></div>
         </div>`);
@@ -419,7 +422,7 @@
         return `<div class="key ${cls}" data-code="${code}">${short(code) || code}</div>`;
       };
       const rows = KROWS.map(r => `<div class="kbrow">${r.map(keyHtml).join("")}</div>`).join("");
-      const bindRow = (p, hero, cls) => ["left","right","up","down","action"].map(a =>
+      const bindRow = (p, hero, cls) => ["left","right","up","down","action","special","attack"].map(a =>
         `<button class="btn small ${cls}" data-rb="${p}:${a}"><span class="ico">${a === "up" ? "⤴" : a === "action" ? "✦" : a === "down" ? "▾" : a === "left" ? "◀" : "▶"}</span>${short(b["p"+p][a])}</button>`).join("");
       const wrap = el(`
         <div>
@@ -530,13 +533,32 @@
     },
 
     // ---- Completion ------------------------------------------------------
+    /** Grade a run: time under par + no deaths + all gems -> S/A/B/C. */
+    _grade(res) {
+      const lvl = GG.LEVELS.find(l => l.id === res.id) || {};
+      const par = { easy: 120, medium: 210, hard: 320, extreme: 460 }[lvl.tier] || 210;
+      let pts = 0;
+      if (res.timeMs <= par * 1000) pts++;
+      if (res.deaths === 0) pts++;
+      if (res.totalGems > 0 && res.gems >= res.totalGems) pts++;
+      return ["C", "B", "A", "S"][pts];
+    },
+
     showComplete(game, res) {
       const p = GG.save.getLevel(res.id) || {};
       const isBest = p.bestMs === res.timeMs;
       const last = res.id >= GG.LEVEL_COUNT;
+      const grade = this._grade(res);
+      // persist the best grade
+      const rank = { C: 0, B: 1, A: 2, S: 3 };
+      if (!p.grade || rank[grade] > rank[p.grade]) { p.grade = grade; GG.save.save(); }
+      const gcol = { S: "#f2c14e", A: "#6ef0a0", B: "#4fc3ff", C: "#cdb488" }[grade];
       const node = el(`
         <div class="menu">
           <h1>Level Complete!</h1>
+          <div class="center" style="margin:4px 0 8px;">
+            <span style="font-family:var(--font-head);font-size:40px;color:${gcol};text-shadow:0 0 22px ${gcol};">${grade}</span>
+          </div>
           <p class="tagline">${res.id}. ${GG.LEVELS.find(l => l.id === res.id).name} — you escaped together.</p>
           <div class="field"><label>Time</label><span>${U.formatTime(res.timeMs)} ${isBest ? '<span class="badge ok">Best!</span>' : ""}</span></div>
           <div class="field"><label>Gems</label><span>${res.gems} / ${res.totalGems} 💎</span></div>
@@ -572,6 +594,9 @@
           <div class="hud-center">
             <div class="hud-obj"></div>
             <div class="hud-stats"></div>
+            <div class="hud-energy" style="width:180px;height:8px;margin:5px auto 0;border:1px solid rgba(255,224,138,.5);border-radius:6px;background:rgba(0,0,0,.5);overflow:hidden;">
+              <div class="hud-energy-fill" style="height:100%;width:100%;background:linear-gradient(90deg,#6ef0a0,#4fc3ff);transition:width .15s;"></div>
+            </div>
             <div class="hud-net"></div>
           </div>
           <button id="hud-pause" class="btn small ghost">⏸ Menu</button>
@@ -601,6 +626,15 @@
         (Object.keys(lvl.keys || {}).length ? ` · 🗝 ${Object.values(lvl.keys).reduce((a, b) => a + b, 0)}` : "") +
         ` · <span class="timer">${U.formatTime(lvl.timeMs)}</span>` +
         `${lvl.won ? ' · <span class="badge ok">✔ Escaped!</span>' : ''}`;
+      // shared ability energy bar (pulses red when nearly drained)
+      const fill = q(".hud-energy-fill");
+      if (fill) {
+        const f = lvl.energy / lvl.energyMax;
+        fill.style.width = (f * 100).toFixed(0) + "%";
+        fill.style.background = f < 0.25
+          ? "#ff6b6b"
+          : "linear-gradient(90deg,#6ef0a0,#4fc3ff)";
+      }
       const net = q(".hud-net");
       net.innerHTML = (game.mode === "online" && GG.net.isOnline())
         ? `<span class="badge ok">● Online ${GG.net.isHost() ? "Host" : "Client"} · ${GG.net.latencyMs || "–"}ms</span>` : "";

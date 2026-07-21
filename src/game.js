@@ -32,6 +32,11 @@
       this._accum = 0; this._last = 0; this._raf = null;
       this._netSendCtr = 0;
       this._remoteInput = { left: false, right: false, up: false, jumpPressed: false, action: false };
+      // Press-edges (jump/special/attack) buffered until a physics step
+      // consumes them. Without this, frames that run zero fixed steps (common
+      // on 144Hz+ displays, where frame dt < 1/120) silently eat key presses —
+      // the classic "sometimes my jump doesn't come out" bug.
+      this._edgeBuf = [{}, {}];
       this._wasWon = false;
       this.achievements = null;
     }
@@ -176,7 +181,14 @@
 
     // ---- Networking wiring ----------------------------------------------
     _wireNet() {
-      GG.net.onInput((inp) => { this._remoteInput = inp; });      // host receives client input
+      GG.net.onInput((inp) => {                                   // host receives client input
+        // a press-edge in one packet must not be erased by the next packet
+        const b = this._edgeBuf[1];
+        b.jump = b.jump || !!inp.jumpPressed;
+        b.special = b.special || !!inp.specialPressed;
+        b.attack = b.attack || !!inp.attackPressed;
+        this._remoteInput = inp;
+      });
       GG.net.onState((snap) => { if (this.level) this.level.applySnapshot(snap); }); // client applies
       GG.net.onLevel((info) => {                                  // client sets up level
         this.charAssign = info.chars || [0, 1];
@@ -215,6 +227,15 @@
         else if (this.state === "paused") this.resume();
       }
       if (this.state === "playing" && GG.input.globalPressed("restart")) this.restartLevel();
+      // Co-op pings: F marks for Player 1, / (slash) for Player 2.
+      if (this.state === "playing" && this.level) {
+        const ping = (p) => {
+          this.level.pings.push({ x: p.cx, y: p.y - 26, t: 3, color: p.character.body });
+          GG.audio.sfx("uihover");
+        };
+        if (GG.input.wasPressed("KeyF")) ping(this.level.players[0]);
+        if (GG.input.wasPressed("Slash")) ping(this.level.players[1]);
+      }
 
       if (this.state === "playing") {
         this._sim(dt);
@@ -235,16 +256,26 @@
       };
     }
 
+    /** Merge a snapshot with any still-unconsumed press edges for slot i. */
+    _bufEdges(i, snap) {
+      const b = this._edgeBuf[i];
+      snap.jumpPressed = snap.jumpPressed || !!b.jump;
+      snap.specialPressed = snap.specialPressed || !!b.special;
+      snap.attackPressed = snap.attackPressed || !!b.attack;
+      b.jump = snap.jumpPressed; b.special = snap.specialPressed; b.attack = snap.attackPressed;
+      return snap;
+    }
+
     _sim(dt) {
       const lvl = this.level; if (!lvl) return;
 
-      // Assign inputs based on mode/role.
+      // Assign inputs based on mode/role (press-edges buffered until consumed).
       if (this.mode === "local") {
-        lvl.players[0].input = GG.input.snapshot(0);
-        lvl.players[1].input = GG.input.snapshot(1);
+        lvl.players[0].input = this._bufEdges(0, GG.input.snapshot(0));
+        lvl.players[1].input = this._bufEdges(1, GG.input.snapshot(1));
       } else if (this.role === "host") {
-        lvl.players[0].input = this._buildLocalInput();
-        lvl.players[1].input = this._remoteInput;
+        lvl.players[0].input = this._bufEdges(0, this._buildLocalInput());
+        lvl.players[1].input = this._bufEdges(1, Object.assign({}, this._remoteInput));
       } else { // client
         const mine = this._buildLocalInput();
         GG.net.sendInput(mine);           // send our input upstream
@@ -271,6 +302,8 @@
           }
         }
         this.fx.update(dt);
+        // The edges were consumed by at least one step — release the buffer.
+        if (steps > 0) this._edgeBuf = [{}, {}];
         // Host broadcasts snapshots at ~30 Hz.
         if (this.role === "host" && this.mode === "online") {
           if ((this._netSendCtr++ & 1) === 0) GG.net.sendState(lvl.snapshot());

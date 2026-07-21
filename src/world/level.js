@@ -65,6 +65,31 @@
       this.totalGems = this.gems.length;
       this.secretsFound = 0;
       this.totalSecrets = this.objects.filter(o => o instanceof O.SecretSwitch).length;
+      // Shared ability energy: telekinesis and swinging drain one common pool.
+      // Levels may shrink the pool (`energyMax`) for scarcity challenges.
+      this.energyMax = data.energyMax || 100;
+      this.energy = this.energyMax;
+      this.pings = [];               // co-op markers: {x,y,t,color}
+      this.enemies = this.objects.filter(o => o instanceof O.Sentinel);
+      this.rats = this.objects.filter(o => o instanceof O.Rat);
+      this.bosses = this.objects.filter(o => o instanceof O.Boss);
+      this.projectiles = [];         // weapon fire: {x,y,vx,vy,from,arrow}
+      // Story pets join after Chapter 2: Nova, a tiny celestial cat who walks
+      // with Nichols, and Pip, a magical frog who hops after Nibihah.
+      const pet = (kind, name, owner) => ({
+        kind, name, owner,
+        x: data.spawns[owner].x - 20, y: data.spawns[owner].y,
+        vy: 0, t: 0, trail: 0,
+        mood: "follow",       // follow | sit | sleep | yawn | roll | alert | cheer
+        moodT: 0,             // seconds left in the current mood
+        idleT: 0,             // how long the owner has stood still
+        alertT: 0,            // cooldown between "there's a secret here!" calls
+        near: null,           // the secret currently being sensed
+        blink: 0, ear: 0, hop: 0,
+      });
+      this.pets = (data.chapter >= 3)
+        ? [pet("cat", "Nova", 0), pet("frog", "Pip", 1)]
+        : [];
       this.deaths = 0;
       this.won = false;
       this.winTimer = 0;
@@ -91,6 +116,11 @@
         portal: O.Portal, crumble: O.Crumble, blink: O.Blinker,
         crusher: O.Crusher, blade: O.Blade, rock: O.Rock,
         timeswitch: O.TimedSwitch, rotor: O.Rotor,
+        telecube: O.TeleCube, anchor: O.SwingAnchor, tandem: O.TandemPlate,
+        tether: O.TetherZone, wind: O.WindZone, runeseq: O.RuneSeq,
+        seesaw: O.Seesaw, battery: O.Battery, dock: O.Receptacle,
+        sentinel: O.Sentinel, watcher: O.Watcher, boss: O.Boss,
+        tutor: O.Tutor, rat: O.Rat,
       };
       const Cls = map[o.type];
       if (!Cls) { console.warn("[Level] unknown object type:", o.type); return; }
@@ -120,6 +150,8 @@
             o instanceof O.BridgeAnchor || o instanceof O.HiddenPlatform ||
             o instanceof O.Crumble || o instanceof O.Blinker) {
           const r = o.solidRect(); if (r) near.push(r);
+        } else if (o instanceof O.Seesaw) {
+          near.push(o.panL, o.panR);
         } else if (o instanceof O.NarrowGate) {
           // Narrow gates block everyone EXCEPT characters that fit (Lyra).
           const player = entity && entity.character;
@@ -127,8 +159,14 @@
         }
       }
       // Players are solid to each other -> enables standing on heads + pushing.
+      // EXCEPT: a rider standing on YOUR head is not your ceiling — otherwise
+      // the carrier's jump collides with their own passenger and dies at 0px.
       if (includePlayers && entity && entity.character) {
-        for (const p of this.players) if (p !== entity && !p.dead) near.push(p);
+        for (const p of this.players) {
+          if (p === entity || p.dead) continue;
+          if (p.groundRef === entity || p._stackedOn === entity) continue;   // my rider, not a wall
+          near.push(p);
+        }
       }
       return near;
     }
@@ -158,15 +196,78 @@
       // 3) Crates: push detection + gravity + collision.
       for (const c of this.crates) this._stepCrate(c, dt);
 
-      // 4) Players.
-      for (const p of this.players) p.update(dt, this);
-      // 4b) Co-op: ride on a partner's head, and push each other around.
+      // 4) Players. A swinging hero follows pendulum physics; a hero riding a
+      //    jumping carrier is glued to their head for the flight.
+      for (const p of this.players) {
+        if (p._stackedOn) this._stepStacked(p, dt);
+        else if (p.swing) this._stepSwing(p, dt);
+        else p.update(dt, this);
+      }
+      // 4b) Telekinesis roots the holder in place: snap him back and pin him.
+      for (const p of this.players) {
+        if (p.teleHold && !p.dead) {
+          if (p._rootX == null) { p._rootX = p.x; p._rootY = p.y; }
+          p.x = p._rootX; if (p.onGround) p.y = p._rootY;
+          p.vx = 0; p._buffer = 0;
+          if (!p.onGround) p.teleHold.dropTele();   // knocked airborne -> lose grip
+        } else p._rootX = p._rootY = null;
+      }
+      // 4c) Co-op: ride on a partner's head, and push each other around.
       this._carryPlayerRiders();
       this._resolvePlayerPush(dt);
+      // 4d) Shared energy regenerates while no ability is drawing on it.
+      const drawing = this.players.some(p => p.teleHold || p.swing);
+      if (!drawing) this.energy = Math.min(this.energyMax, this.energy + 12 * dt);
+      // pings fade
+      for (const g of this.pings) g.t -= dt;
+      this.pings = this.pings.filter(g => g.t > 0);
+
+      // 4e) Weapons: Nichols' bolt gun, Nibihah's arrows (slight arc).
+      for (const p of this.players) {
+        p._atkCd = Math.max(0, (p._atkCd || 0) - dt);
+        if (!p.dead && p.input && p.input.attackPressed && p._atkCd === 0) {
+          p._atkCd = 0.45;
+          const arrow = p.character.canDash;      // the explorer shoots arrows
+          // fire from the hip, not the chest — rats are ankle-height
+          this.projectiles.push({
+            x: p.cx + p.facing * 14, y: p.y + p.h - 12,
+            vx: p.facing * (arrow ? 440 : 540), vy: arrow ? -50 : 0,
+            from: p.index, arrow, life: 1.4,
+          });
+          GG.bus.emit("laser:shot", {});
+          GG.audio && GG.audio.sfx("laser");
+          this.fx.burst({ x: p.cx + p.facing * 14, y: p.cy - 4, count: 4, color: p.character.light, speed: 60, life: 0.2 });
+        }
+      }
+      for (const s of this.projectiles) {
+        if (s.arrow) s.vy += 240 * dt;
+        s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt;
+        if (this.tilemap.isSolid(Math.floor(s.x / C.TILE), Math.floor(s.y / C.TILE))) { s.life = 0; continue; }
+        const hit = { x: s.x - 4, y: s.y - 4, w: 8, h: 8 };
+        for (const r of this.rats) {
+          if (!r.deadRat && U.aabb(hit, r)) { r.takeHit(this, Math.sign(s.vx)); s.life = 0; break; }
+        }
+        if (s.life > 0) for (const b of this.bosses) {
+          if (!b.defeated && U.aabb(hit, b)) { b.takeHit(this, 1, Math.sign(s.vx)); s.life = 0; break; }
+        }
+      }
+      this.projectiles = this.projectiles.filter(s => s.life > 0);
+
+      // 4f) A wiped party lets the rat nests recover (they never respawn otherwise).
+      if (this.players.every(p => p.dead)) for (const r of this.rats) r.reset();
+
+      // 4g) Nova and Pip trot after their heroes, sense nearby secrets, and
+      //     fall asleep if nobody is going anywhere.
+      for (const pet of this.pets) this._stepPet(pet, dt);
+
+      // 4h) The wildlife goes about its business (and scatters when crowded).
+      this._stepAmbient(dt);
 
       // 5) Interactables (switches/buttons/doors/teleporters/exits/hazards/lasers).
+      //    Plain crates and platforms were already stepped above — but a
+      //    TeleCube's telekinesis brain still needs its update.
       for (const o of this.objects) {
-        if (o instanceof O.Crate || o instanceof O.MovingPlatform) continue;
+        if ((o instanceof O.Crate && !o.tele) || o instanceof O.MovingPlatform) continue;
         o.update(dt, this);
       }
 
@@ -175,8 +276,14 @@
       for (const l of this.lasers) this._traceLaser(l);
 
       // 7) Collectibles.
-      for (const g of this.gems) for (const p of this.players) g.tryCollect(p, this);
-      for (const k of this.keyItems) for (const p of this.players) k.tryCollect(p, this);
+      for (const g of this.gems) for (const p of this.players) {
+        const had = g.collected; g.tryCollect(p, this);
+        if (!had && g.collected && p.feel) p.feel("excited", 1.4);   // a little delight
+      }
+      for (const k of this.keyItems) for (const p of this.players) {
+        const had = k.collected; k.tryCollect(p, this);
+        if (!had && k.collected && p.feel) p.feel("proud", 1.6);
+      }
 
       // 8) Hazard + laser damage.
       for (const p of this.players) {
@@ -210,6 +317,342 @@
       } else if (alive && this.exits.length && this.exits.every(e => e.occupied)) {
         this._win();
       }
+    }
+
+    /**
+     * Pet brain. Nova (cat) and Pip (frog) follow their hero, sniff out hidden
+     * platforms, secret switches and uncollected gems, and drift into little
+     * idle behaviours — sitting, yawning, rolling over, dozing off — whenever
+     * the party stops moving.
+     */
+    _stepPet(pet, dt) {
+      pet.t += dt;
+      pet.blink = pet.blink > 0 ? pet.blink - dt : (Math.random() < dt * 0.4 ? 0.12 : 0);
+      const o = this.players[pet.owner];
+      if (!o) return;
+
+      // -- follow: trail a few paces behind, on the hero's back side --------
+      const tx = o.cx - o.facing * 22 - 6;
+      const moving = Math.abs(o.vx) > 24 && !o.dead;
+      const far = Math.abs(pet.x - tx);
+      pet.x = U.damp(pet.x, tx, far > 90 ? 11 : 6, dt);     // sprint to catch up
+      const ground = o.y + o.h - 12;
+      if (pet.kind === "frog") {                             // Pip hops
+        pet.hop = far > 12 ? Math.abs(Math.sin(pet.t * 6)) : U.damp(pet.hop, 0, 8, dt);
+        pet.y = U.damp(pet.y, ground - pet.hop * 10, 10, dt);
+      } else {
+        pet.y = U.damp(pet.y, ground, 10, dt);
+        pet.ear = U.damp(pet.ear, moving ? 0 : Math.sin(pet.t * 1.7) * 0.5, 4, dt);
+      }
+
+      // -- sensing: is there something hidden within a whisker's reach? -----
+      pet.alertT = Math.max(0, pet.alertT - dt);
+      let found = null, bestD = 74;
+      const consider = (ox, oy) => {
+        const d = Math.hypot(ox - pet.x, oy - pet.y);
+        if (d < bestD) { bestD = d; found = { x: ox, y: oy }; }
+      };
+      for (const ob of this.objects) {
+        // Nova senses structure — hidden platforms and secret switches.
+        // Pip senses loot — gems still waiting to be picked up.
+        const isSecret = (ob instanceof O.HiddenPlatform && ob.reveal < 0.5) ||
+                         (ob instanceof O.SecretSwitch && !ob.on);
+        if (pet.kind === "cat" && isSecret) consider(ob.cx, ob.cy);
+      }
+      if (pet.kind === "frog") for (const g of this.gems) if (!g.collected) consider(g.cx, g.cy);
+      pet.near = found;
+
+      if (found && pet.alertT <= 0 && pet.mood !== "cheer") {
+        pet.mood = "alert"; pet.moodT = 1.1; pet.alertT = 3.4;
+        // a soft mrrp / croak, plus a spark pointing at the secret
+        GG.bus.emit("pet:alert", { kind: pet.kind, name: pet.name, x: found.x, y: found.y });
+        this.fx.burst({
+          x: found.x, y: found.y, count: 5, life: 0.9, speed: 18, lift: 12, glow: true,
+          color: pet.kind === "cat" ? ["#a9d4ff", "#fff"] : ["#f2e14e", "#fff"],
+        });
+      }
+
+      // -- mood machine -----------------------------------------------------
+      pet.moodT = Math.max(0, pet.moodT - dt);
+      if (moving) { pet.idleT = 0; if (pet.moodT <= 0) pet.mood = "follow"; }
+      else {
+        pet.idleT += dt;
+        if (pet.moodT <= 0) {
+          if (pet.idleT > 16) pet.mood = "sleep";                     // dozed off
+          else if (pet.idleT > 3.5) {
+            // pick a little flourish, then settle back down
+            const r = Math.random();
+            if (pet.mood === "sit" && r < 0.35) { pet.mood = pet.kind === "cat" ? "roll" : "yawn"; pet.moodT = 1.6; }
+            else if (pet.mood === "sit" && r < 0.6) { pet.mood = "yawn"; pet.moodT = 1.2; }
+            else { pet.mood = "sit"; pet.moodT = 2.6; }
+          }
+        }
+      }
+      if (this.won && pet.mood !== "cheer") { pet.mood = "cheer"; pet.moodT = 4; }
+
+      // -- footprint trails --------------------------------------------------
+      pet.trail -= dt;
+      if (moving && pet.trail <= 0) {
+        pet.trail = 0.09;
+        if (pet.kind === "cat") {
+          const rainbow = ["#ff6b6b", "#ffb14d", "#f2e14e", "#6ef0a0", "#4fc3ff", "#c07bff"];
+          this.fx.burst({ x: pet.x, y: pet.y + 8, count: 2, color: rainbow, speed: 22, life: 0.7, lift: 14, glow: true });
+        } else {
+          this.fx.burst({ x: pet.x, y: pet.y + 8, count: 2, color: ["#fff", "#f2c14e"], speed: 18, life: 0.8, lift: 20, glow: true });
+        }
+      }
+    }
+
+    /** Nova the celestial cat and Pip the star-frog. Small, but full of life. */
+    _renderPet(ctx, pet) {
+      const o = this.players[pet.owner];
+      const dir = o ? o.facing : 1;
+      const m = pet.mood, t = pet.t;
+      // sitting/sleeping settles the body down; rolling flips it over
+      const sit = (m === "sit" || m === "sleep" || m === "yawn") ? 2 : 0;
+      const roll = m === "roll" ? Math.min(1, pet.moodT / 1.6) : 0;
+      const breathe = m === "sleep" ? Math.sin(t * 2) * 0.7 : 0;
+
+      ctx.save(); ctx.translate(pet.x, pet.y + sit);
+      if (roll > 0) ctx.rotate(Math.sin((1 - roll) * Math.PI * 2) * 1.6);
+      if (m === "cheer") ctx.translate(0, -Math.abs(Math.sin(t * 9)) * 5);
+
+      // Figma-imported sprites (Nova the celestial fox / Pip the frog)
+      const spr = GG.SPRITES && (pet.kind === "cat" ? GG.SPRITES.nova : GG.SPRITES.pip);
+      if (spr) {
+        if (m === "sleep") ctx.scale(1, 0.85);                 // curled down
+        ctx.translate(0, -pet.hop * 6 * (pet.kind === "frog" ? 1 : 0));
+        // small companions: Nova's sprite is long (tail!), so scale by a
+        // modest height — she ends up ~20px nose-to-tail vs 26+px heroes
+        GG.drawSprite(ctx, spr, 0, 9, pet.kind === "cat" ? 9 : 8, dir, {
+          t, blink: pet.blink,
+          legOff: (m === "follow" && o && Math.abs(o.vx) > 24) ? Math.sin(t * 12) * 1.5 : 0,
+        });
+        // shared: sleeping "z", and an arrow of light toward a sensed secret
+        if (m === "sleep") {
+          ctx.fillStyle = "rgba(255,255,255,0.75)"; ctx.font = "bold 6px monospace";
+          ctx.fillText("z", dir * 9, -8 - ((t * 6) % 6));
+        }
+        ctx.restore();
+        if (pet.near && pet.mood === "alert") {                // points it out
+          const a = Math.atan2(pet.near.y - pet.y, pet.near.x - pet.x);
+          ctx.save(); ctx.globalAlpha = 0.45 + Math.sin(t * 10) * 0.2;
+          ctx.strokeStyle = pet.kind === "cat" ? "#a9d4ff" : "#f2e14e"; ctx.lineWidth = 1.2;
+          ctx.setLineDash([2, 3]);
+          ctx.beginPath(); ctx.moveTo(pet.x + Math.cos(a) * 10, pet.y + 3 + Math.sin(a) * 10);
+          ctx.lineTo(pet.near.x, pet.near.y); ctx.stroke();
+          ctx.setLineDash([]); ctx.restore();
+        }
+        return;
+      }
+
+      if (pet.kind === "cat") {
+        // ---- Nova: white fur, glowing blue tail, floating crystal ears ----
+        ctx.shadowBlur = 8; ctx.shadowColor = "rgba(120,190,255,0.55)";  // celestial aura
+        ctx.fillStyle = "#f6f1e9";
+        ctx.beginPath(); ctx.ellipse(0, 6 + breathe, 7, 4.5 - sit * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "#ded4c6";                                       // belly/leg shade
+        ctx.beginPath(); ctx.ellipse(0, 8.5 + breathe, 5.5, 2, 0, 0, Math.PI * 2); ctx.fill();
+        if (!sit) {                                                      // trotting paws
+          for (let i = 0; i < 2; i++) {
+            const px = -3 + i * 7, sw = Math.sin(t * 12 + i * 3) * 1.6;
+            ctx.fillStyle = "#f6f1e9"; ctx.fillRect(px + sw, 8, 2.2, 3);
+          }
+        }
+        ctx.fillStyle = "#f6f1e9";                                        // head
+        ctx.beginPath(); ctx.arc(dir * 6, 2, 4, 0, Math.PI * 2); ctx.fill();
+
+        // floating crystal ears — they hover just off the head and pulse
+        const eb = Math.sin(t * 3) * 0.6 + pet.ear * 2;
+        ctx.fillStyle = "#a9d4ff"; ctx.shadowBlur = 7; ctx.shadowColor = "#a9d4ff";
+        ctx.globalAlpha = 0.9;
+        const ear = (ex) => {
+          ctx.beginPath();
+          ctx.moveTo(ex, -3.5 + eb); ctx.lineTo(ex + 1.8, -0.5 + eb);
+          ctx.lineTo(ex, 0.6 + eb); ctx.lineTo(ex - 1.8, -0.5 + eb); ctx.closePath(); ctx.fill();
+        };
+        ear(dir * 4.2); ear(dir * 8.2);
+        ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+
+        // glowing blue tail, curling and drifting
+        const wag = m === "cheer" ? Math.sin(t * 12) * 6 : Math.sin(t * 4) * 3;
+        const grad = ctx.createLinearGradient(-dir * 6, 5, -dir * 13, -4);
+        grad.addColorStop(0, "#f6f1e9"); grad.addColorStop(1, "#5fb8ff");
+        ctx.strokeStyle = grad; ctx.lineWidth = 2.4; ctx.lineCap = "round";
+        ctx.shadowBlur = 8; ctx.shadowColor = "#5fb8ff";
+        ctx.beginPath(); ctx.moveTo(-dir * 6, 5);
+        ctx.quadraticCurveTo(-dir * 12, 2 + wag, -dir * 11, -4 + wag * 0.4); ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // face
+        const eyeShut = m === "sleep" || pet.blink > 0 || m === "yawn";
+        if (eyeShut) {
+          ctx.strokeStyle = "#3a3128"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(dir * 6, 1.6, 1.6, 0.15, Math.PI - 0.15); ctx.stroke();
+        } else {
+          ctx.fillStyle = "#4fc3ff"; ctx.shadowBlur = 5; ctx.shadowColor = "#4fc3ff";
+          ctx.fillRect(dir * 5.2, 0.6, 1.8, 2);
+          ctx.fillRect(dir * 8, 0.8, 1.4, 1.8);
+          ctx.shadowBlur = 0;
+        }
+        ctx.fillStyle = "#ff9ac4"; ctx.fillRect(dir * 9 - 0.6, 3, 1.6, 1.2);   // nose
+        ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.lineWidth = 0.6;       // whiskers
+        for (let i = -1; i <= 1; i++) {
+          ctx.beginPath(); ctx.moveTo(dir * 9, 3); ctx.lineTo(dir * 15, 2 + i * 2); ctx.stroke();
+        }
+        if (m === "yawn") {                                                    // wide little yawn
+          ctx.fillStyle = "#c9607a";
+          ctx.beginPath(); ctx.ellipse(dir * 8.5, 4.6, 1.4, 1.8, 0, 0, Math.PI * 2); ctx.fill();
+        }
+      } else {
+        // ---- Pip: emerald frog with a tiny backpack and huge eyes --------
+        ctx.fillStyle = "#3f9e46";
+        ctx.beginPath(); ctx.ellipse(0, 6 + breathe, 6.2, 4.2 - sit * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#5fc45a";                                             // lit back
+        ctx.beginPath(); ctx.ellipse(0, 4.6 + breathe, 5.4, 2.6, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#dff5d0";                                             // pale belly
+        ctx.beginPath(); ctx.ellipse(dir * 1.5, 8.4, 4, 2, 0, 0, Math.PI * 2); ctx.fill();
+        // folded legs, springing on the hop
+        ctx.fillStyle = "#3f9e46";
+        const spring = 1 - pet.hop * 0.6;
+        ctx.fillRect(-dir * 5, 6, 3, 4 * spring); ctx.fillRect(dir * 4, 7, 3, 3.4 * spring);
+        // tiny backpack
+        ctx.fillStyle = "#6b4526"; ctx.fillRect(-dir * 5.5, 2.5, 4, 4.5);
+        ctx.fillStyle = "#e8c65c"; ctx.fillRect(-dir * 5.5, 3.6, 4, 1);
+        // head + cheeks (inflate before a croak)
+        const puff = m === "alert" ? Math.min(1, pet.moodT / 1.1) : 0;
+        ctx.fillStyle = "#4fae4d";
+        ctx.beginPath(); ctx.arc(dir * 3, 1, 3.6 + puff * 1.4, 0, Math.PI * 2); ctx.fill();
+        if (puff > 0) {
+          ctx.fillStyle = "#7fd070"; ctx.globalAlpha = 0.9;
+          ctx.beginPath(); ctx.ellipse(dir * 3, 3, 3.6 + puff * 2, 2.2 + puff * 1.6, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+        // big expressive eyes on top of the head
+        const shut = m === "sleep" || pet.blink > 0;
+        const ey = -2.4, e1 = dir * 1.6, e2 = dir * 5.2;
+        ctx.fillStyle = "#4fae4d";                                             // eye mounds
+        ctx.beginPath(); ctx.arc(e1, ey, 2.6, 0, Math.PI * 2); ctx.arc(e2, ey, 2.6, 0, Math.PI * 2); ctx.fill();
+        if (shut) {
+          ctx.strokeStyle = "#1f3a1c"; ctx.lineWidth = 0.9;
+          ctx.beginPath(); ctx.moveTo(e1 - 2, ey); ctx.lineTo(e1 + 2, ey);
+          ctx.moveTo(e2 - 2, ey); ctx.lineTo(e2 + 2, ey); ctx.stroke();
+        } else {
+          ctx.fillStyle = "#fff";
+          ctx.beginPath(); ctx.arc(e1, ey, 2.1, 0, Math.PI * 2); ctx.arc(e2, ey, 2.1, 0, Math.PI * 2); ctx.fill();
+          const look = m === "alert" ? dir * 0.8 : Math.sin(t * 0.9) * 0.5;
+          ctx.fillStyle = "#1a1220";
+          ctx.beginPath(); ctx.arc(e1 + look, ey, 1.1, 0, Math.PI * 2); ctx.arc(e2 + look, ey, 1.1, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(e1 + look + 0.3, ey - 1.1, 0.8, 0.8); ctx.fillRect(e2 + look + 0.3, ey - 1.1, 0.8, 0.8);
+        }
+        ctx.strokeStyle = "#1f3a1c"; ctx.lineWidth = 0.9;                      // wide smile
+        ctx.beginPath(); ctx.arc(dir * 3, 1.4, 2.6, 0.2, Math.PI - 0.2); ctx.stroke();
+        if (m === "cheer") {                                                   // a little wave
+          ctx.strokeStyle = "#4fae4d"; ctx.lineWidth = 2; ctx.lineCap = "round";
+          ctx.beginPath(); ctx.moveTo(dir * 5, 5);
+          ctx.lineTo(dir * 8, 1 + Math.sin(t * 14) * 2.5); ctx.stroke();
+        }
+      }
+
+      // shared: sleeping "z", and an arrow of light toward a sensed secret
+      if (m === "sleep") {
+        ctx.fillStyle = "rgba(255,255,255,0.75)"; ctx.font = "bold 6px monospace";
+        ctx.fillText("z", dir * 9, -4 - ((t * 6) % 6));
+      }
+      ctx.restore();
+
+      if (pet.near && pet.mood === "alert") {                                  // points it out
+        const a = Math.atan2(pet.near.y - pet.y, pet.near.x - pet.x);
+        ctx.save(); ctx.globalAlpha = 0.45 + Math.sin(t * 10) * 0.2;
+        ctx.strokeStyle = pet.kind === "cat" ? "#a9d4ff" : "#f2e14e"; ctx.lineWidth = 1.2;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.moveTo(pet.x + Math.cos(a) * 10, pet.y + 3 + Math.sin(a) * 10);
+        ctx.lineTo(pet.near.x, pet.near.y); ctx.stroke();
+        ctx.setLineDash([]); ctx.restore();
+      }
+    }
+
+    /**
+     * A rider glued to a jumping carrier's head. They fly as one unit; the
+     * rider can JUMP OFF mid-flight for a springboard boost (the classic
+     * co-op double-lift), and the stack dissolves when the carrier lands.
+     */
+    _stepStacked(p, dt) {
+      const c = p._stackedOn;
+      if (!c || c.dead || p.dead) { p._stackedOn = null; return; }
+      // ride the head
+      p.x = c.x + (c.w - p.w) / 2;
+      p.y = c.y - p.h;
+      p.vx = c.vx; p.vy = c.vy;
+      p.facing = c.facing;
+      p.onGround = false; p.groundRef = null;
+      p.animName = "jump"; p.animTime = (p.animTime || 0) + dt;
+      // springboard: jumping off mid-flight launches from the carrier's speed
+      if (p.input && p.input.jumpPressed) {
+        p._stackedOn = null;
+        p.vy = Math.min(c.vy, 0) - 620 * p.character.jumpScale * 0.9;
+        p.jumpsLeft = Math.max(0, p.character.maxJumps - 1);
+        GG.bus.emit("player:jump", { index: p.index });
+        this.fx.burst({ x: p.cx, y: p.y + p.h, count: 10, color: [p.character.body, "#fff"], speed: 120, life: 0.35, glow: true });
+        return;
+      }
+      // the flight ends when the carrier touches down — back to a normal stand
+      if (c.onGround) { p._stackedOn = null; p.vy = 0; }
+    }
+
+    /** Spend from the shared ability pool. Returns false when it runs dry. */
+    spendEnergy(amount) {
+      if (this.energy < amount) { this.energy = Math.max(0, this.energy - amount); return false; }
+      this.energy -= amount;
+      return true;
+    }
+
+    /**
+     * Pendulum swing for Nibihah (deterministic, fixed-step):
+     *  angle a is measured from straight-down at the anchor; pump with
+     *  left/right near the bottom of the arc, reel with up/down, release with
+     *  jump/special to launch with the current tangential velocity.
+     */
+    _stepSwing(p, dt) {
+      const s = p.swing;
+      s.cool = Math.max(0, s.cool - dt);
+      const inp = p.input || {};
+      // drains the shared pool; an empty pool drops the line
+      if (!this.spendEnergy(8 * dt) || p.dead) { p.swing = null; return; }
+      // pump: push in your direction of travel near the bottom of the arc
+      const dir = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
+      if (dir !== 0 && Math.abs(s.a) < 1.1) s.av += dir * 2.2 * dt;
+      // reel the line in/out
+      if (inp.up) s.L = Math.max(50, s.L - 75 * dt);
+      if (inp.down) s.L = Math.min(235, s.L + 75 * dt);
+      // pendulum step
+      s.av += -(C.GRAVITY / s.L) * Math.sin(s.a) * dt;
+      s.av *= (1 - 0.12 * dt);
+      s.a += s.av * dt;
+      const nx = s.ax + Math.sin(s.a) * s.L, ny = s.ay + Math.cos(s.a) * s.L;
+      // crashing into stone stuns the swing dead
+      const probe = { x: nx - p.w / 2, y: ny - p.h / 2, w: p.w, h: p.h, character: p.character };
+      if (this.overlapsSolid(probe, p)) {
+        p.swing = null; p.vx = 0; p.vy = 40; p.squash = 0.7;
+        this.cam.shake(0.15);
+        this.fx.burst({ x: p.cx, y: p.cy, count: 8, color: "#cfd8ff", speed: 90, life: 0.3 });
+        return;
+      }
+      p.x = nx - p.w / 2; p.y = ny - p.h / 2;
+      p.vx = s.av * s.L * Math.cos(s.a);
+      p.vy = -s.av * s.L * Math.sin(s.a);
+      if (Math.abs(p.vx) > 10) p.facing = Math.sign(p.vx);
+      p.onGround = false;
+      p.animName = "jump"; p.animTime = (p.animTime || 0) + dt;
+      // release: jump or a fresh special press
+      if ((inp.jumpPressed || (inp.specialPressed && s.cool <= 0))) {
+        p.swing = null;
+        p.jumpsLeft = Math.max(p.jumpsLeft, 1);      // keep her double jump alive
+        this.fx.burst({ x: p.cx, y: p.cy, count: 6, color: p.character.body, speed: 80, life: 0.3, glow: true });
+      }
+      if (Math.random() < dt * 8) this.fx.burst({ x: p.cx, y: p.cy, count: 1, color: p.character.light, speed: 20, life: 0.25 });
     }
 
     /** Carry a player who is standing on another player's head (ride along). */
@@ -347,7 +790,11 @@
       this.won = true; this.winTimer = 0;
       // Victory pose scales with how punishing the level was.
       const pose = (this.data.tier === "extreme") ? "exhausted" : "celebrate";
-      for (const p of this.players) { p.celebrating = true; p.victoryPose = pose; }
+      for (const p of this.players) {
+        p.celebrating = true; p.victoryPose = pose;
+        // grinning, or doubled over and grinning anyway
+        if (p.feel) p.feel(pose === "exhausted" ? "exhausted" : "laughing", 6);
+      }
       GG.bus.emit("level:complete", {
         id: this.id, timeMs: this.timeMs, gems: this.gemsCollected,
         totalGems: this.totalGems, deaths: this.deaths, noDeath: this.deaths === 0,
@@ -371,47 +818,685 @@
         const p = this.players[e.player];
         e.occupied = p && !p.dead && U.aabb(p, e);
       }
+      // decorative-only systems still animate on remote clients
+      for (const p of this.players) if (p._stepCloth) p._stepCloth(dt);   // scarf/braid/cape
+      for (const pet of this.pets) this._stepPet(pet, dt);
+      this._stepAmbient(dt);
       this.fx.update(dt);
     }
 
     // ---- Rendering -------------------------------------------------------
+
+    /**
+     * Layered biome backdrops. Every theme is a stack of parallax layers built
+     * from a handful of reusable painters (ridges, columns, trees, islands,
+     * clouds, crystal clusters, fog bands, light shafts) so each chapter reads
+     * as a distinct place without hand-authoring eleven separate scenes.
+     *
+     * Each layer: { d: depth 0..1 (0 = infinitely far), paint: fn(ctx, cam, L) }
+     * Layer geometry is generated once from a seeded RNG so it never shimmers.
+     */
     _buildParallax() {
-      this._stars = [];
-      for (let i = 0; i < 120; i++) {
-        this._stars.push({ x: Math.random() * this.tilemap.w, y: Math.random() * this.tilemap.h * 0.7, r: Math.random() * 1.6 + 0.4, d: Math.random() * 0.6 + 0.2 });
+      // deterministic per-level RNG — the same level always looks the same
+      let seed = (this.id * 2654435761) >>> 0;
+      const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+      const W = this.tilemap.w, H = this.tilemap.h;
+      const span = W + 1200;                       // generous so parallax never runs out
+
+      // --- generic geometry generators ---------------------------------
+      const ridge = (n, base, amp) => {            // jagged silhouette points
+        const pts = [];
+        for (let i = 0; i <= n; i++) pts.push({ x: (i / n) * span, y: base + (rnd() - 0.5) * amp });
+        return pts;
+      };
+      const scatter = (n, yMin, yMax, sMin, sMax) => {
+        const a = [];
+        for (let i = 0; i < n; i++) a.push({
+          x: rnd() * span, y: yMin + rnd() * (yMax - yMin),
+          s: sMin + rnd() * (sMax - sMin), p: rnd() * 6.28, f: 0.3 + rnd() * 1.2,
+        });
+        return a;
+      };
+
+      this._stars = scatter(150, 0, H * 0.75, 0.4, 2.0).map(s => (s.d = 0.15 + rnd() * 0.5, s));
+      this._motes = scatter(60, 0, H, 0.6, 2.2);
+
+      // --- reusable painters -------------------------------------------
+      // Draws a filled silhouette from ridge points down to the bottom.
+      const paintRidge = (pts, fill) => (ctx, cam, d) => {
+        const ox = -cam.x * d, oy = -cam.y * d * 0.6;
+        ctx.fillStyle = fill;
+        ctx.beginPath(); ctx.moveTo(ox, cam.viewH + 40);
+        for (const p of pts) ctx.lineTo(p.x + ox, p.y + oy);
+        ctx.lineTo(pts[pts.length - 1].x + ox, cam.viewH + 40); ctx.closePath(); ctx.fill();
+      };
+      // Hanging stalactites / dripping rock teeth.
+      const paintTeeth = (items, fill, flip) => (ctx, cam, d) => {
+        const ox = -cam.x * d, oy = -cam.y * d * 0.6;
+        ctx.fillStyle = fill;
+        for (const it of items) {
+          const x = it.x + ox, y = it.y + oy, w = it.s * 5, h = it.s * 26;
+          if (x < -60 || x > cam.viewW + 60) continue;
+          ctx.beginPath();
+          if (flip) { ctx.moveTo(x - w, y); ctx.lineTo(x + w, y); ctx.lineTo(x, y - h); }
+          else { ctx.moveTo(x - w, y); ctx.lineTo(x + w, y); ctx.lineTo(x, y + h); }
+          ctx.closePath(); ctx.fill();
+        }
+      };
+      // Glowing crystal clusters embedded in the rock.
+      const paintCrystals = (items, col) => (ctx, cam, d) => {
+        const ox = -cam.x * d, oy = -cam.y * d * 0.6, t = this.timeMs / 1000;
+        for (const it of items) {
+          const x = it.x + ox, y = it.y + oy;
+          if (x < -40 || x > cam.viewW + 40) continue;
+          ctx.globalAlpha = 0.35 + Math.sin(t * it.f + it.p) * 0.18;
+          ctx.fillStyle = col; ctx.shadowBlur = 14 * it.s; ctx.shadowColor = col;
+          for (let k = -1; k <= 1; k++) {
+            const h = it.s * (10 + k * 3), w = it.s * 2.4;
+            ctx.beginPath();
+            ctx.moveTo(x + k * w * 2, y); ctx.lineTo(x + k * w * 2 + w, y - h * 0.6);
+            ctx.lineTo(x + k * w * 2, y - h); ctx.lineTo(x + k * w * 2 - w, y - h * 0.6);
+            ctx.closePath(); ctx.fill();
+          }
+        }
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      };
+      // Layered tree silhouettes with soft canopies.
+      const paintTrees = (items, trunk, leaf) => (ctx, cam, d) => {
+        const ox = -cam.x * d, oy = -cam.y * d * 0.6, t = this.timeMs / 1000;
+        for (const it of items) {
+          const x = it.x + ox, y = it.y + oy, s = it.s;
+          if (x < -80 || x > cam.viewW + 80) continue;
+          const sway = Math.sin(t * 0.6 + it.p) * s * 1.2;
+          ctx.fillStyle = trunk;
+          ctx.beginPath(); ctx.moveTo(x - s * 1.6, y); ctx.lineTo(x + s * 1.6, y);
+          ctx.lineTo(x + s * 0.9 + sway, y - s * 22); ctx.lineTo(x - s * 0.9 + sway, y - s * 22);
+          ctx.closePath(); ctx.fill();
+          ctx.fillStyle = leaf;                                  // stacked canopy blobs
+          for (let k = 0; k < 3; k++) {
+            const cy = y - s * (16 + k * 6), r = s * (11 - k * 2.5);
+            ctx.beginPath(); ctx.ellipse(x + sway * (1 + k * 0.3), cy, r, r * 0.62, 0, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+      };
+      // Weathered temple columns, some snapped off.
+      const paintColumns = (items, stone, shade) => (ctx, cam, d) => {
+        const ox = -cam.x * d, oy = -cam.y * d * 0.6;
+        for (const it of items) {
+          const x = it.x + ox, y = it.y + oy, w = it.s * 9, h = it.s * (30 + (it.p % 1) * 40);
+          if (x < -60 || x > cam.viewW + 60) continue;
+          ctx.fillStyle = stone; ctx.fillRect(x - w / 2, y - h, w, h);
+          ctx.fillStyle = shade; ctx.fillRect(x - w / 2, y - h, w * 0.3, h);       // shaded side
+          ctx.fillStyle = stone;                                                    // capital + base
+          ctx.fillRect(x - w * 0.75, y - h - w * 0.4, w * 1.5, w * 0.4);
+          ctx.fillRect(x - w * 0.75, y - w * 0.35, w * 1.5, w * 0.35);
+          ctx.fillStyle = shade;                                                    // fluting
+          for (let k = -1; k <= 1; k++) ctx.fillRect(x + k * w * 0.28, y - h, 1, h);
+        }
+      };
+      // Floating sky islands: rock wedge with a grass cap.
+      const paintIslands = (items, rock, cap) => (ctx, cam, d) => {
+        const ox = -cam.x * d, oy = -cam.y * d * 0.6, t = this.timeMs / 1000;
+        for (const it of items) {
+          const bobY = Math.sin(t * 0.4 + it.p) * it.s * 1.5;
+          const x = it.x + ox, y = it.y + oy + bobY, w = it.s * 22, h = it.s * 16;
+          if (x < -120 || x > cam.viewW + 120) continue;
+          ctx.fillStyle = rock;
+          ctx.beginPath(); ctx.moveTo(x - w / 2, y); ctx.lineTo(x + w / 2, y);
+          ctx.lineTo(x + w * 0.18, y + h); ctx.lineTo(x - w * 0.1, y + h * 0.7);
+          ctx.closePath(); ctx.fill();
+          ctx.fillStyle = cap;
+          ctx.beginPath(); ctx.ellipse(x, y, w / 2, it.s * 2.2, 0, 0, Math.PI * 2); ctx.fill();
+        }
+      };
+      // Soft cloud banks.
+      const paintClouds = (items, col, alpha) => (ctx, cam, d) => {
+        const ox = -cam.x * d, oy = -cam.y * d * 0.6, t = this.timeMs / 1000;
+        ctx.globalAlpha = alpha; ctx.fillStyle = col;
+        for (const it of items) {
+          const x = it.x + ox + t * it.f * 4, y = it.y + oy, s = it.s;
+          const wx = ((x % (cam.viewW + 300)) + cam.viewW + 300) % (cam.viewW + 300) - 150;
+          for (let k = 0; k < 4; k++) {
+            ctx.beginPath();
+            ctx.ellipse(wx + k * s * 7 - s * 10, y + Math.sin(k + it.p) * s * 2, s * 9, s * 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.globalAlpha = 1;
+      };
+      // God rays / shafts of light angling down through the scene.
+      const paintShafts = (items, col, alpha) => (ctx, cam, d) => {
+        const ox = -cam.x * d, t = this.timeMs / 1000;
+        ctx.globalAlpha = alpha;
+        for (const it of items) {
+          const x = it.x + ox;
+          if (x < -160 || x > cam.viewW + 160) continue;
+          const w = it.s * 12, sway = Math.sin(t * 0.3 + it.p) * 6;
+          const g = ctx.createLinearGradient(x, 0, x + 70 + sway, cam.viewH);
+          g.addColorStop(0, col); g.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.moveTo(x - w, 0); ctx.lineTo(x + w, 0);
+          ctx.lineTo(x + 70 + sway + w * 2, cam.viewH); ctx.lineTo(x + 70 + sway - w * 2, cam.viewH);
+          ctx.closePath(); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      };
+      // Soft light pools glowing on the cave floor beneath the crystals.
+      const paintPools = (items, rgb) => (ctx, cam, d) => {
+        const ox = -cam.x * d, oy = -cam.y * d * 0.6, t = this.timeMs / 1000;
+        for (const it of items) {
+          const x = it.x + ox, y = it.y + oy;
+          if (x < -160 || x > cam.viewW + 160) continue;
+          const rw = it.s * 90, breathe = 0.22 + Math.sin(t * it.f + it.p) * 0.08;
+          const g = ctx.createRadialGradient(x, y, 0, x, y, rw);
+          g.addColorStop(0, `rgba(${rgb},${breathe})`); g.addColorStop(1, `rgba(${rgb},0)`);
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.ellipse(x, y, rw, rw * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+        }
+      };
+      // A single wide fog band drifting near the floor (the "realism" haze).
+      const paintFog = (fy, rgb) => (ctx, cam, d) => {
+        const t = this.timeMs / 1000;
+        const y = fy - cam.y * d * 0.6;
+        const g = ctx.createLinearGradient(0, y - 60, 0, y + 60);
+        g.addColorStop(0, `rgba(${rgb},0)`);
+        g.addColorStop(0.5, `rgba(${rgb},${0.06 + Math.sin(t * 0.4) * 0.02})`);
+        g.addColorStop(1, `rgba(${rgb},0)`);
+        ctx.fillStyle = g; ctx.fillRect(0, y - 60, cam.viewW, 120);
+      };
+      // Hanging vines with glowing tips, swaying gently (forest).
+      const paintVines = (items) => (ctx, cam, d) => {
+        const ox = -cam.x * d, t = this.timeMs / 1000;
+        for (const it of items) {
+          const x = it.x + ox;
+          if (x < -20 || x > cam.viewW + 20) continue;
+          const vh = 40 + it.s * 60, sway = Math.sin(t * 0.8 + it.p) * 4;
+          ctx.strokeStyle = "#2e8f50"; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.moveTo(x, 0);
+          ctx.quadraticCurveTo(x + sway * 0.5, vh * 0.6, x + sway, vh); ctx.stroke();
+          ctx.fillStyle = "#5ce08a"; ctx.shadowBlur = 6; ctx.shadowColor = "#5ce08a";
+          ctx.fillRect(x + sway - 2, vh, 4, 5);
+          ctx.shadowBlur = 0;
+        }
+      };
+      // Spirit flowers pulsing on the forest floor.
+      const paintFlowers = (items) => (ctx, cam, d) => {
+        const ox = -cam.x * d, oy = -cam.y * d * 0.6, t = this.timeMs / 1000;
+        const cols = ["#a9f07e", "#ff9ad4", "#7fd4ff"];
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i], x = it.x + ox, y = it.y + oy;
+          if (x < -30 || x > cam.viewW + 30) continue;
+          const col = cols[i % cols.length];
+          ctx.strokeStyle = "#2e8f50"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(x, y + 12); ctx.lineTo(x, y + 2); ctx.stroke();
+          ctx.fillStyle = col; ctx.shadowBlur = 12; ctx.shadowColor = col;
+          ctx.globalAlpha = 0.75 + Math.sin(t * 1.8 + it.p) * 0.25;
+          ctx.beginPath(); ctx.arc(x, y, 4 + it.s, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+        }
+      };
+      // Drifting nebula blooms for the celestial chapters.
+      const paintNebula = (items, cols) => (ctx, cam, d) => {
+        const ox = -cam.x * d, oy = -cam.y * d * 0.6, t = this.timeMs / 1000;
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i], x = it.x + ox, y = it.y + oy;
+          const r = it.s * 60 + Math.sin(t * 0.3 + it.p) * 10;
+          const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+          g.addColorStop(0, cols[i % cols.length]); g.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.globalAlpha = 0.35; ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      };
+      // Distant machinery: pipes, tanks and slow-turning gears.
+      const paintMachines = (items, metal, shade, glow) => (ctx, cam, d) => {
+        const ox = -cam.x * d, oy = -cam.y * d * 0.6, t = this.timeMs / 1000;
+        for (const it of items) {
+          const x = it.x + ox, y = it.y + oy, s = it.s;
+          if (x < -90 || x > cam.viewW + 90) continue;
+          ctx.fillStyle = metal; ctx.fillRect(x - s * 8, y - s * 34, s * 16, s * 34);
+          ctx.fillStyle = shade; ctx.fillRect(x - s * 8, y - s * 34, s * 4, s * 34);
+          ctx.fillStyle = glow;                                     // lit portholes
+          for (let k = 0; k < 3; k++) ctx.fillRect(x - s * 2, y - s * (28 - k * 9), s * 4, s * 3);
+          ctx.save();                                                // slow gear
+          ctx.translate(x + s * 12, y - s * 20); ctx.rotate(t * 0.4 * it.f);
+          ctx.fillStyle = shade;
+          for (let k = 0; k < 8; k++) { ctx.rotate(Math.PI / 4); ctx.fillRect(-s, -s * 9, s * 2, s * 4); }
+          ctx.beginPath(); ctx.arc(0, 0, s * 5, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+        }
+      };
+
+      // --- per-biome layer stacks ---------------------------------------
+      const B = {
+        // Chapter 1 — Underground Caves (synced to the Figma environment):
+        // #05070f->#1b2740 depths, hazy far ridges, god rays, big glowing
+        // crystals with light pools, drifting fog.
+        cave: {
+          sky: ["#05070f", "#0e1526", "#1b2740"],
+          layers: [
+            { d: 0.10, paint: paintRidge(ridge(14, H * 0.45, 120), "#0c1322") },
+            { d: 0.20, paint: paintTeeth(scatter(26, 0, H * 0.28, 0.7, 1.8), "#101828") },
+            { d: 0.24, paint: paintShafts(scatter(4, 0, 1, 0.9, 1.8), "rgba(191,230,255,0.12)", 1) },
+            { d: 0.28, paint: paintRidge(ridge(18, H * 0.62, 90), "#131c30") },
+            { d: 0.34, paint: paintCrystals(scatter(16, H * 0.35, H * 0.85, 0.9, 2.2), "#6ef0d0") },
+            { d: 0.36, paint: paintPools(scatter(6, H * 0.8, H * 0.95, 1.2, 2.4), "110,240,208") },
+            { d: 0.40, paint: paintFog(H * 0.78, "159,200,255") },
+            { d: 0.45, paint: paintTeeth(scatter(18, 0, H * 0.18, 1.0, 2.4), "#182238") },
+          ],
+        },
+        // Chapter 2 — Wrecked Ruins: broken columns, cold mist, drowned stone
+        ruins: {
+          sky: ["#081218", "#0f1f26", "#183038"],
+          layers: [
+            { d: 0.08, paint: paintRidge(ridge(10, H * 0.40, 150), "#0c1c22") },
+            { d: 0.18, paint: paintColumns(scatter(14, H * 0.72, H * 0.88, 0.8, 1.7), "#17303a", "#0f2029") },
+            { d: 0.26, paint: paintShafts(scatter(5, 0, 1, 0.8, 1.6), "rgba(150,220,235,0.16)", 1) },
+            { d: 0.34, paint: paintColumns(scatter(9, H * 0.86, H * 0.98, 1.2, 2.2), "#1e3b47", "#132a33") },
+            { d: 0.40, paint: paintCrystals(scatter(8, H * 0.5, H * 0.9, 0.6, 1.2), "#7fd4ff") },
+          ],
+        },
+        // Chapter 3 — Enchanted Forest (synced to the Figma environment):
+        // #0a1a12->#1e4a2c greens, canopy layers, warm gold rays, hanging
+        // vines with glowing tips, spirit flowers, ground mist.
+        forest: {
+          sky: ["#0a1a12", "#12301e", "#1e4a2c"],
+          layers: [
+            { d: 0.08, paint: paintRidge(ridge(12, H * 0.42, 100), "#0d2417") },
+            { d: 0.16, paint: paintTrees(scatter(16, H * 0.78, H * 0.92, 0.8, 1.4), "#12301e", "#1d4f2c") },
+            { d: 0.24, paint: paintShafts(scatter(6, 0, 1, 0.9, 1.8), "rgba(255,233,168,0.18)", 1) },
+            { d: 0.30, paint: paintVines(scatter(10, 0, 1, 0.8, 1.8)) },
+            { d: 0.32, paint: paintTrees(scatter(12, H * 0.9, H * 1.02, 1.3, 2.1), "#173d25", "#26602f") },
+            { d: 0.40, paint: paintFlowers(scatter(5, H * 0.88, H * 0.96, 0.8, 1.4)) },
+            { d: 0.42, paint: paintFog(H * 0.82, "191,230,200") },
+          ],
+        },
+        jungle: null,   // alias -> forest (filled in below)
+        // Chapter 4 — The Great Temple: gold, banners, deep incense haze
+        temple: {
+          sky: ["#160e22", "#241634", "#3a2246"],
+          layers: [
+            { d: 0.10, paint: paintRidge(ridge(9, H * 0.38, 80), "#1d1230") },
+            { d: 0.18, paint: paintColumns(scatter(12, H * 0.74, H * 0.9, 1.0, 1.9), "#3a2a4e", "#261a35") },
+            { d: 0.26, paint: paintShafts(scatter(5, 0, 1, 1.0, 2.0), "rgba(255,205,110,0.15)", 1) },
+            { d: 0.34, paint: paintCrystals(scatter(12, H * 0.45, H * 0.9, 0.8, 1.6), "#f2c14e") },
+            { d: 0.42, paint: paintColumns(scatter(7, H * 0.92, H * 1.04, 1.6, 2.4), "#463256", "#2d1f3c") },
+          ],
+        },
+        // Chapter 5 — Temple in the Sky: floating islands above a cloud sea
+        city: {
+          sky: ["#12224a", "#254273", "#4d76a8"],
+          layers: [
+            { d: 0.06, paint: paintClouds(scatter(8, H * 0.2, H * 0.5, 1.4, 2.6), "#9fc0e8", 0.30) },
+            { d: 0.14, paint: paintIslands(scatter(9, H * 0.28, H * 0.6, 0.8, 1.6), "#2f4f78", "#3f7f8f") },
+            { d: 0.24, paint: paintClouds(scatter(7, H * 0.45, H * 0.8, 1.8, 3.2), "#c3dbf5", 0.28) },
+            { d: 0.34, paint: paintIslands(scatter(6, H * 0.6, H * 0.9, 1.4, 2.4), "#3b628f", "#4e97a6") },
+            { d: 0.44, paint: paintShafts(scatter(4, 0, 1, 1.2, 2.2), "rgba(255,240,190,0.14)", 1) },
+          ],
+        },
+        ice: null,      // alias -> city
+        // Chapter 6 — The Heavens: nebulae, star fields, drifting rune rings
+        heart: {
+          sky: ["#0d0620", "#1c0c33", "#2e1440"],
+          layers: [
+            { d: 0.05, paint: paintNebula(scatter(6, H * 0.15, H * 0.75, 0.8, 2.0), ["rgba(140,90,255,0.5)", "rgba(255,110,190,0.4)", "rgba(90,190,255,0.45)"]) },
+            { d: 0.18, paint: paintIslands(scatter(7, H * 0.3, H * 0.75, 0.7, 1.5), "#2a1a44", "#5b3f8f") },
+            { d: 0.30, paint: paintCrystals(scatter(14, H * 0.3, H * 0.9, 0.7, 1.6), "#c79bff") },
+            { d: 0.40, paint: paintShafts(scatter(4, 0, 1, 1.0, 2.0), "rgba(200,160,255,0.13)", 1) },
+          ],
+        },
+        night: null,    // alias -> heart
+        // Industrial interludes
+        factory: {
+          sky: ["#150f18", "#231824", "#332232"],
+          layers: [
+            { d: 0.10, paint: paintRidge(ridge(11, H * 0.44, 90), "#1a1220") },
+            { d: 0.20, paint: paintMachines(scatter(9, H * 0.78, H * 0.92, 0.9, 1.8), "#2e2233", "#1d1522", "#ff9a4d") },
+            { d: 0.32, paint: paintMachines(scatter(6, H * 0.9, H * 1.02, 1.4, 2.4), "#3a2b3f", "#241a2a", "#ffb066") },
+            { d: 0.40, paint: paintShafts(scatter(3, 0, 1, 1.0, 1.8), "rgba(255,150,80,0.10)", 1) },
+          ],
+        },
+        lab: null,      // alias -> factory
+      };
+      B.jungle = B.forest; B.ice = B.city; B.night = B.heart; B.lab = B.factory;
+      this._biome = B[this.theme] || B.cave;
+      this._buildAmbient(rnd);
+    }
+
+    /**
+     * Ambient wildlife. Each biome is stocked with creatures that live their
+     * own small lives and react to the heroes — flyers scatter, ground animals
+     * bolt for cover, and the shy ones freeze and watch from a distance.
+     */
+    _buildAmbient(rnd) {
+      const W = this.tilemap.w, H = this.tilemap.h;
+      // kind: [flyer?, colour, size, skittishness]
+      const CASTS = {
+        cave:    ["moth", "firefly", "bat", "lizard", "firefly", "moth"],
+        ruins:   ["dragonfly", "firefly", "lizard", "moth", "fish", "turtle"],
+        forest:  ["butterfly", "firefly", "rabbit", "deer", "squirrel", "bird", "frog", "bee", "leaf"],
+        jungle:  ["butterfly", "frog", "bird", "dragonfly", "lizard", "bee"],
+        temple:  ["moth", "firefly", "bird", "scarab", "dragonfly"],
+        city:    ["bird", "butterfly", "dragonfly", "leaf", "bee"],
+        ice:     ["bird", "moth", "fish"],
+        factory: ["moth", "firefly", "lizard"],
+        lab:     ["moth", "firefly"],
+        heart:   ["firefly", "moth", "butterfly", "wisp", "wisp"],
+        night:   ["owl", "firefly", "moth", "bat"],
+      };
+      const cast = CASTS[this.theme] || CASTS.cave;
+      const FLYERS = new Set(["butterfly", "firefly", "bird", "dragonfly", "bee", "moth", "bat", "leaf", "wisp", "scarab", "owl"]);
+      this._ambient = [];
+      const n = 22;
+      for (let i = 0; i < n; i++) {
+        const kind = cast[(rnd() * cast.length) | 0];
+        const fly = FLYERS.has(kind);
+        const hx = rnd() * W, hy = fly ? rnd() * H * 0.7 : H * (0.55 + rnd() * 0.4);
+        this._ambient.push({
+          kind, fly, hx, hy,                      // home position
+          x: hx, y: hy, vx: 0, vy: 0,
+          t: rnd() * 6.28, p: rnd() * 6.28,
+          f: 0.6 + rnd() * 1.4,                   // personal tempo
+          fear: 0,                                // 0 calm .. 1 fleeing
+          shy: 60 + rnd() * 70,                   // flight distance
+          state: "calm",                          // calm | flee | watch | hide
+          dir: rnd() < 0.5 ? -1 : 1,
+        });
       }
     }
 
+    _stepAmbient(dt) {
+      if (!this._ambient) return;
+      for (const a of this._ambient) {
+        a.t += dt * a.f;
+        // nearest living hero decides the mood
+        let d = 1e9, px = 0;
+        for (const p of this.players) {
+          if (p.dead) continue;
+          const dd = Math.hypot(p.cx - a.x, p.cy - a.y);
+          if (dd < d) { d = dd; px = p.cx; }
+        }
+        // deer and owls hold their ground and stare before bolting
+        const watcher = a.kind === "deer" || a.kind === "owl";
+        if (d < a.shy * (watcher ? 0.55 : 1)) a.state = "flee";
+        else if (watcher && d < a.shy * 1.8) a.state = "watch";
+        else if (d > a.shy * 2.2) a.state = "calm";
+
+        a.fear = U.damp(a.fear, a.state === "flee" ? 1 : 0, a.state === "flee" ? 12 : 1.5, dt);
+
+        if (a.state === "flee") {
+          const away = a.x < px ? -1 : 1;
+          a.dir = away;
+          if (a.fly) { a.vx = away * 70 * a.f; a.vy = -34 - Math.sin(a.t * 6) * 22; }
+          else { a.vx = away * 95 * a.f; a.vy = 0; }
+        } else {
+          // drift home, wandering gently on the way
+          const tx = a.hx + Math.sin(a.t * 0.5 + a.p) * (a.fly ? 46 : 22);
+          const ty = a.hy + (a.fly ? Math.sin(a.t * (a.kind === "butterfly" ? 2.2 : 0.8) + a.p) * 22 : 0);
+          a.vx = U.damp(a.vx, (tx - a.x) * 1.6, 4, dt);
+          a.vy = U.damp(a.vy, (ty - a.y) * 1.6, 4, dt);
+          if (Math.abs(a.vx) > 3) a.dir = a.vx < 0 ? -1 : 1;
+        }
+        a.x += a.vx * dt; a.y += a.vy * dt;
+        // never stray too far from home, and never leave the level
+        a.x = U.clamp(a.x, 8, this.tilemap.w - 8);
+        a.y = U.clamp(a.y, 8, this.tilemap.h - 8);
+        if (Math.abs(a.x - a.hx) > 220) a.hx = a.x;    // adopt a new home after a long flight
+      }
+    }
+
+    _renderAmbient(ctx, cam) {
+      if (!this._ambient) return;
+      ctx.save();
+      ctx.translate(-cam.x, -cam.y);
+      for (const a of this._ambient) {
+        const sx = a.x - cam.x, sy = a.y - cam.y;
+        if (sx < -40 || sx > cam.viewW + 40 || sy < -40 || sy > cam.viewH + 40) continue;
+        this._drawCreature(ctx, a);
+      }
+      ctx.restore();
+    }
+
+    /** One tiny creature, drawn at world coordinates. */
+    _drawCreature(ctx, a) {
+      const t = a.t, d = a.dir, flap = Math.sin(t * (a.fly ? 14 : 6));
+      ctx.save(); ctx.translate(a.x, a.y);
+
+      switch (a.kind) {
+        case "butterfly": {
+          const w = 3 + Math.abs(flap) * 3.5;
+          ctx.fillStyle = "#ff9ad4";
+          ctx.beginPath(); ctx.ellipse(-w, -1, w, 3, 0.4, 0, 6.28); ctx.fill();
+          ctx.beginPath(); ctx.ellipse(w, -1, w, 3, -0.4, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#ffe08a";
+          ctx.beginPath(); ctx.ellipse(-w * 0.8, 0.5, w * 0.5, 1.6, 0.4, 0, 6.28); ctx.fill();
+          ctx.beginPath(); ctx.ellipse(w * 0.8, 0.5, w * 0.5, 1.6, -0.4, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#3a2438"; ctx.fillRect(-0.6, -2, 1.2, 5);
+          break;
+        }
+        case "firefly": case "wisp": {
+          const c = a.kind === "wisp" ? "#c79bff" : "#e8ff8a";
+          const pulse = 0.4 + Math.sin(t * 3 + a.p) * 0.4;
+          ctx.globalAlpha = Math.max(0.08, pulse);
+          ctx.fillStyle = c; ctx.shadowBlur = 10; ctx.shadowColor = c;
+          ctx.beginPath(); ctx.arc(0, 0, a.kind === "wisp" ? 2.4 : 1.5, 0, 6.28); ctx.fill();
+          ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+          break;
+        }
+        case "bird": {
+          ctx.strokeStyle = "#2b3550"; ctx.lineWidth = 1.6; ctx.lineCap = "round";
+          const w = 5 + flap * 3;
+          ctx.beginPath();
+          ctx.moveTo(-6, w * 0.4); ctx.quadraticCurveTo(-2, -w, 0, 0);
+          ctx.quadraticCurveTo(2, -w, 6, w * 0.4); ctx.stroke();
+          break;
+        }
+        case "owl": {
+          ctx.fillStyle = "#6b5540";
+          ctx.beginPath(); ctx.ellipse(0, 0, 5, 7, 0, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#8a6f52";
+          ctx.beginPath(); ctx.ellipse(0, 2, 3.4, 4.5, 0, 0, 6.28); ctx.fill();
+          ctx.beginPath();                                   // ear tufts
+          ctx.moveTo(-4, -5); ctx.lineTo(-2.5, -9); ctx.lineTo(-1, -5);
+          ctx.moveTo(4, -5); ctx.lineTo(2.5, -9); ctx.lineTo(1, -5); ctx.fill();
+          ctx.fillStyle = "#ffd05a";                          // big watching eyes
+          ctx.beginPath(); ctx.arc(-2, -2, 2, 0, 6.28); ctx.arc(2, -2, 2, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#1a1220";
+          const look = a.state === "watch" ? d * 0.7 : 0;
+          ctx.beginPath(); ctx.arc(-2 + look, -2, 1, 0, 6.28); ctx.arc(2 + look, -2, 1, 0, 6.28); ctx.fill();
+          break;
+        }
+        case "bat": {
+          ctx.fillStyle = "#2a2038";
+          const w = 6 + flap * 4;
+          ctx.beginPath();
+          ctx.moveTo(0, 0); ctx.lineTo(-w, -3); ctx.lineTo(-w * 0.6, 2); ctx.lineTo(0, 3);
+          ctx.lineTo(w * 0.6, 2); ctx.lineTo(w, -3); ctx.closePath(); ctx.fill();
+          ctx.fillStyle = "#ff6b6b"; ctx.fillRect(-1, -1, 0.9, 0.9); ctx.fillRect(0.5, -1, 0.9, 0.9);
+          break;
+        }
+        case "dragonfly": {
+          ctx.globalAlpha = 0.55; ctx.fillStyle = "#bfe8ff";
+          const w = 7 + Math.abs(flap) * 2;
+          ctx.beginPath(); ctx.ellipse(-2, -1, w, 1.6, 0.2, 0, 6.28); ctx.fill();
+          ctx.beginPath(); ctx.ellipse(2, -1, w, 1.6, -0.2, 0, 6.28); ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = "#3fc3a0"; ctx.fillRect(-1, -1, 2, 9);
+          ctx.beginPath(); ctx.arc(0, -2, 2, 0, 6.28); ctx.fill();
+          break;
+        }
+        case "bee": {
+          ctx.fillStyle = "#f2c14e";
+          ctx.beginPath(); ctx.ellipse(0, 0, 3, 2.2, 0, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#2a2018";
+          ctx.fillRect(-1.6, -2.2, 1.2, 4.4); ctx.fillRect(1, -2.2, 1.2, 4.4);
+          ctx.globalAlpha = 0.5; ctx.fillStyle = "#fff";
+          ctx.beginPath(); ctx.ellipse(0, -2.5, 3 + Math.abs(flap), 1.4, 0, 0, 6.28); ctx.fill();
+          ctx.globalAlpha = 1;
+          break;
+        }
+        case "moth": {
+          ctx.globalAlpha = 0.85; ctx.fillStyle = "#cfc3a8";
+          const w = 3 + Math.abs(flap) * 2.5;
+          ctx.beginPath(); ctx.ellipse(-w * 0.6, 0, w, 2.6, 0.3, 0, 6.28); ctx.fill();
+          ctx.beginPath(); ctx.ellipse(w * 0.6, 0, w, 2.6, -0.3, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#8b7f68"; ctx.fillRect(-0.6, -1.5, 1.2, 4); ctx.globalAlpha = 1;
+          break;
+        }
+        case "scarab": {
+          ctx.fillStyle = "#e8c65c"; ctx.shadowBlur = 6; ctx.shadowColor = "#e8c65c";
+          ctx.beginPath(); ctx.ellipse(0, 0, 3.4, 2.6, 0, 0, 6.28); ctx.fill();
+          ctx.shadowBlur = 0; ctx.fillStyle = "#a3862f";
+          ctx.fillRect(-0.5, -2.6, 1, 5.2);
+          break;
+        }
+        case "leaf": {
+          ctx.rotate(t * 1.2);
+          ctx.fillStyle = ["#c98f3a", "#b6642f", "#8fae4a"][(a.p * 3) | 0 % 3];
+          ctx.beginPath(); ctx.ellipse(0, 0, 3.4, 1.6, 0, 0, 6.28); ctx.fill();
+          break;
+        }
+        case "rabbit": {
+          const hop = a.state === "flee" ? Math.abs(Math.sin(t * 9)) * 6 : 0;
+          ctx.translate(0, -hop);
+          ctx.fillStyle = "#d8cbb8";
+          ctx.beginPath(); ctx.ellipse(0, 0, 6, 4, 0, 0, 6.28); ctx.fill();
+          ctx.beginPath(); ctx.arc(d * 5, -3, 3, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#d8cbb8";                           // long ears, laid back when fleeing
+          const lay = a.state === "flee" ? 0.9 : 0.15;
+          for (let k = 0; k < 2; k++) {
+            ctx.save(); ctx.translate(d * 5, -5); ctx.rotate(d * (lay + k * 0.3));
+            ctx.beginPath(); ctx.ellipse(0, -3, 1.3, 4, 0, 0, 6.28); ctx.fill(); ctx.restore();
+          }
+          ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(-d * 6, -1, 2, 0, 6.28); ctx.fill();  // tail
+          ctx.fillStyle = "#2a2018"; ctx.fillRect(d * 6, -4, 1.2, 1.2);
+          break;
+        }
+        case "squirrel": {
+          ctx.fillStyle = "#a4643a";
+          ctx.beginPath(); ctx.ellipse(0, 0, 4.5, 3, 0, 0, 6.28); ctx.fill();
+          ctx.beginPath(); ctx.arc(d * 4, -2.5, 2.4, 0, 6.28); ctx.fill();
+          ctx.strokeStyle = "#c07f4c"; ctx.lineWidth = 3.2; ctx.lineCap = "round";  // big curling tail
+          ctx.beginPath(); ctx.moveTo(-d * 4, 1);
+          ctx.quadraticCurveTo(-d * 10, -2, -d * 7, -8 + Math.sin(t * 4) * 1.5); ctx.stroke();
+          ctx.fillStyle = "#2a2018"; ctx.fillRect(d * 5, -3, 1.1, 1.1);
+          break;
+        }
+        case "deer": {
+          const alert = a.state !== "calm";
+          ctx.fillStyle = "#9c7248";
+          ctx.fillRect(-8, -6, 16, 8);                          // body
+          for (let k = 0; k < 4; k++) ctx.fillRect(-7 + k * 4.6, 2, 1.8, 7);   // legs
+          ctx.save(); ctx.translate(d * 8, -8); ctx.rotate(alert ? -d * 0.25 : d * 0.15);
+          ctx.fillStyle = "#9c7248"; ctx.fillRect(-1.5, -6, 3.5, 8);           // neck
+          ctx.beginPath(); ctx.ellipse(d * 1.5, -7, 3.2, 2.2, 0, 0, 6.28); ctx.fill();
+          ctx.strokeStyle = "#6d4d2f"; ctx.lineWidth = 1.2;                    // antlers
+          ctx.beginPath();
+          ctx.moveTo(0, -9); ctx.lineTo(-1.5, -14); ctx.moveTo(-1.5, -14); ctx.lineTo(-3.5, -13);
+          ctx.moveTo(1, -9); ctx.lineTo(2.5, -14); ctx.moveTo(2.5, -14); ctx.lineTo(4.5, -13);
+          ctx.stroke();
+          ctx.fillStyle = "#1a1220"; ctx.fillRect(d * 2, -8, 1.2, 1.2);
+          ctx.restore();
+          ctx.fillStyle = "#e6d8c4";                                            // white tail flash
+          ctx.beginPath(); ctx.arc(-8, -4, alert ? 2.6 : 1.6, 0, 6.28); ctx.fill();
+          break;
+        }
+        case "lizard": {
+          const scurry = a.state === "flee" ? Math.sin(t * 16) * 1.5 : 0;
+          ctx.fillStyle = "#5f7f4a";
+          ctx.beginPath(); ctx.ellipse(0, 0, 5.5, 2, 0, 0, 6.28); ctx.fill();
+          ctx.beginPath(); ctx.arc(d * 5, -0.5, 2, 0, 6.28); ctx.fill();
+          ctx.strokeStyle = "#5f7f4a"; ctx.lineWidth = 1.6; ctx.lineCap = "round";
+          ctx.beginPath(); ctx.moveTo(-d * 5, 0);
+          ctx.quadraticCurveTo(-d * 9, scurry, -d * 12, -scurry); ctx.stroke();
+          for (let k = 0; k < 2; k++) {
+            ctx.beginPath(); ctx.moveTo(-2 + k * 5, 1);
+            ctx.lineTo(-3 + k * 5 + scurry, 3.5); ctx.stroke();
+          }
+          ctx.fillStyle = "#ffd05a"; ctx.fillRect(d * 6, -1.2, 1, 1);
+          break;
+        }
+        case "frog": {
+          const hop = a.state === "flee" ? Math.abs(Math.sin(t * 10)) * 7 : 0;
+          ctx.translate(0, -hop);
+          ctx.fillStyle = "#4f9e46";
+          ctx.beginPath(); ctx.ellipse(0, 0, 4.5, 3, 0, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#6fc45a";
+          ctx.beginPath(); ctx.arc(-1.6, -3, 1.6, 0, 6.28); ctx.arc(1.6, -3, 1.6, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#1a1220"; ctx.fillRect(-2.1, -3.6, 1, 1); ctx.fillRect(1.1, -3.6, 1, 1);
+          ctx.fillStyle = "#4f9e46"; ctx.fillRect(-5, 1, 2.4, 2.6 - hop * 0.2); ctx.fillRect(2.6, 1, 2.4, 2.6 - hop * 0.2);
+          break;
+        }
+        case "fish": {
+          ctx.fillStyle = "#4fa8d8";
+          ctx.beginPath(); ctx.ellipse(0, 0, 5, 2.4, 0, 0, 6.28); ctx.fill();
+          ctx.beginPath();                                       // tail fin
+          ctx.moveTo(-d * 5, 0); ctx.lineTo(-d * 9, -2.6 + flap); ctx.lineTo(-d * 9, 2.6 + flap);
+          ctx.closePath(); ctx.fill();
+          ctx.fillStyle = "#bfe8ff"; ctx.beginPath(); ctx.ellipse(0, 1, 3.4, 1, 0, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#1a1220"; ctx.fillRect(d * 3, -1, 1, 1);
+          break;
+        }
+        case "turtle": {
+          ctx.fillStyle = "#5f7f4a";
+          ctx.beginPath(); ctx.arc(d * 5, 0, 2.2, 0, 6.28); ctx.fill();         // head
+          ctx.fillRect(-4, 2, 2.4, 2.4); ctx.fillRect(2, 2, 2.4, 2.4);          // feet
+          ctx.fillStyle = "#7a5a30";                                            // shell
+          ctx.beginPath(); ctx.ellipse(0, 0, 6, 4, 0, Math.PI, 0); ctx.fill();
+          ctx.strokeStyle = "#5d4426"; ctx.lineWidth = 0.8;
+          for (let k = -1; k <= 1; k++) { ctx.beginPath(); ctx.moveTo(k * 2.6, 0); ctx.lineTo(k * 1.8, -3.4); ctx.stroke(); }
+          break;
+        }
+        default: {
+          ctx.fillStyle = "#cdd6ff";
+          ctx.beginPath(); ctx.arc(0, 0, 2, 0, 6.28); ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
     renderBackground(ctx, cam) {
-      // Sky gradient by theme.
-      const themes = {
-        cave:    ["#0a0f1e", "#131a30"],
-        temple:  ["#1a1226", "#2a1d3a"],
-        ruins:   ["#0a1418", "#12242a"],
-        factory: ["#1a1218", "#281a24"],
-        ice:     ["#0e1a2c", "#1a2c46"],
-        jungle:  ["#0a1a10", "#12301c"],
-        city:    ["#0c1430", "#182448"],
-        heart:   ["#180a24", "#2a1030"],
-        forest:  ["#0c1a12", "#122b1c"],
-        night:   ["#070a16", "#101838"],
-        lab:     ["#0c1220", "#161f36"],
-      };
-      const t = themes[this.theme] || themes.cave;
+      const bio = this._biome;
+      // Sky: a three-stop gradient so the horizon glows rather than banding.
       const g = ctx.createLinearGradient(0, 0, 0, cam.viewH);
-      g.addColorStop(0, t[0]); g.addColorStop(1, t[1]);
+      g.addColorStop(0, bio.sky[0]); g.addColorStop(0.55, bio.sky[1]); g.addColorStop(1, bio.sky[2]);
       ctx.fillStyle = g; ctx.fillRect(0, 0, cam.viewW, cam.viewH);
 
-      // Parallax stars (drawn in screen space using camera offset * depth).
-      ctx.save();
-      for (const s of this._stars) {
-        const sx = (s.x - cam.x * s.d);
-        const sy = (s.y - cam.y * s.d);
-        if (sx < -4 || sx > cam.viewW + 4 || sy < -4 || sy > cam.viewH + 4) continue;
-        ctx.globalAlpha = s.d;
-        ctx.fillStyle = "#cdd6ff"; ctx.fillRect(sx, sy, s.r, s.r);
+      // Star field (skipped for the leafy biomes, which have a canopy overhead).
+      if (this.theme !== "forest" && this.theme !== "jungle") {
+        ctx.save();
+        const tw = this.timeMs / 1000;
+        for (const s of this._stars) {
+          const sx = s.x - cam.x * s.d, sy = s.y - cam.y * s.d;
+          if (sx < -4 || sx > cam.viewW + 4 || sy < -4 || sy > cam.viewH + 4) continue;
+          ctx.globalAlpha = s.d * (0.7 + Math.sin(tw * s.f + s.p) * 0.3);
+          ctx.fillStyle = "#cdd6ff"; ctx.fillRect(sx, sy, s.s, s.s);
+        }
+        ctx.globalAlpha = 1; ctx.restore();
       }
-      ctx.globalAlpha = 1; ctx.restore();
+
+      // Parallax layers, far to near.
+      ctx.save();
+      for (const L of bio.layers) L.paint(ctx, cam, L.d);
+      ctx.restore();
+
+      // Foreground dust motes / fireflies drifting through the near field.
+      ctx.save();
+      const t = this.timeMs / 1000;
+      const moteCol = this.theme === "forest" || this.theme === "jungle" ? "#d8ff8a"
+        : this.theme === "heart" || this.theme === "night" ? "#d9b8ff" : "#9fc8ff";
+      for (const m of this._motes) {
+        const mx = m.x - cam.x * 0.62 + Math.sin(t * m.f + m.p) * 14;
+        const my = m.y - cam.y * 0.62 + Math.cos(t * m.f * 0.7 + m.p) * 10;
+        if (mx < -6 || mx > cam.viewW + 6 || my < -6 || my > cam.viewH + 6) continue;
+        ctx.globalAlpha = 0.20 + Math.sin(t * 1.6 + m.p) * 0.16;
+        ctx.fillStyle = moteCol; ctx.shadowBlur = 6; ctx.shadowColor = moteCol;
+        ctx.beginPath(); ctx.arc(mx, my, m.s * 0.7, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.restore();
+
+      // Ambient wildlife lives between the backdrop and the tiles.
+      this._renderAmbient(ctx, cam);
     }
 
     renderWorld(ctx, cam) {
@@ -419,7 +1504,46 @@
       // Objects: draw non-players. Order: platforms/doors/hazards then pickups then lasers on top.
       for (const o of this.objects) if (!(o instanceof O.Laser)) o.render(ctx, this);
       for (const l of this.lasers) l.render(ctx, this);
-      for (const p of this.players) p.render(ctx);
+      // the little companions (behind their heroes)
+      for (const pet of this.pets) this._renderPet(ctx, pet);
+      // weapon fire
+      for (const s of this.projectiles) {
+        ctx.save();
+        if (s.arrow) {
+          const a = Math.atan2(s.vy, s.vx);
+          ctx.translate(s.x, s.y); ctx.rotate(a);
+          ctx.strokeStyle = "#c9a06a"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(6, 0); ctx.stroke();
+          ctx.fillStyle = "#c9d2e0"; ctx.beginPath(); ctx.moveTo(9, 0); ctx.lineTo(4, -3); ctx.lineTo(4, 3); ctx.fill();
+          ctx.fillStyle = "#a9d4ff"; ctx.fillRect(-9, -2, 3, 4);
+        } else {
+          ctx.fillStyle = "#9bf0b8"; ctx.shadowBlur = 8; ctx.shadowColor = "#9bf0b8";
+          ctx.beginPath(); ctx.ellipse(s.x, s.y, 6, 2.5, 0, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore(); ctx.shadowBlur = 0;
+      }
+      for (const p of this.players) {
+        // the swing rope, drawn beneath the hero
+        if (p.swing) {
+          ctx.strokeStyle = p.character.light; ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.9;
+          ctx.beginPath(); ctx.moveTo(p.swing.ax, p.swing.ay); ctx.lineTo(p.cx, p.cy - 4); ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+        p.render(ctx);
+      }
+      // co-op pings
+      for (const g of this.pings) {
+        const f = Math.min(1, g.t / 0.5);
+        ctx.save(); ctx.translate(g.x, g.y - (1 - Math.min(1, g.t / 3)) * 6);
+        ctx.globalAlpha = f;
+        ctx.strokeStyle = g.color; ctx.lineWidth = 2;
+        ctx.shadowBlur = 10; ctx.shadowColor = g.color;
+        ctx.rotate(Math.PI / 4);
+        const s = 8 + Math.sin(g.t * 8) * 2;
+        ctx.strokeRect(-s / 2, -s / 2, s, s);
+        ctx.restore(); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+      }
     }
 
     /** Subtle additive bloom: draws soft coloured glow around bright emitters
