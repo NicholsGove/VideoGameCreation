@@ -68,8 +68,8 @@
   const FRICTION = 1800;  // ground friction
   const ICE_FRICTION = 120;
   const JUMP_V = 720;     // base jump velocity
-  const COYOTE = 0.09;    // grace period after leaving ledge
-  const BUFFER = 0.10;    // jump buffer window
+  const COYOTE = 0.12;    // grace period after leaving ledge (Ori-generous)
+  const BUFFER = 0.14;    // jump buffer window (Ori-generous)
   const WALL_SLIDE_MAX = 95;   // max fall speed while wall-sliding
   const WALL_JUMP_VX = 240;    // horizontal kick off a wall
   const DASH_SPEED = 430;      // Nibihah's mid-air dash
@@ -126,6 +126,8 @@
       if (this.dead) return;
       this.dead = true; this.deadTimer = 0;
       this.vx = 0; this.vy = 0;
+      GG.bus.emit("hit:stop", { s: 0.1 });        // the world holds its breath
+      if (level && level.cam) level.cam.shake(0.25);
       GG.bus.emit("player:death", { index: this.index, reason });
       if (level) {
         level.deaths++;
@@ -197,22 +199,23 @@
         // the stacked flight; loose velocities just make them collide mid-air).
         if (rider) rider._stackedOn = this;
         this._buffer = 0; this._coyote = 0; this.onGround = false;
-        this.jumpsLeft = this.character.maxJumps - 1; this.squash = 0.7;
+        this.jumpsLeft = this.character.maxJumps - 1;
+        this.squash = 1.24;                        // STRETCH on the rise (anticipation)
         GG.bus.emit("player:jump", { index: this.index });
-        level.fx.burst({ x: this.cx, y: this.y + this.h, count: 6, color: "#cfd8ff", speed: 60, life: 0.25, angle: -Math.PI / 2, spread: 0.8 });
+        level.fx.burst({ x: this.cx, y: this.y + this.h, count: 9, color: "#cfd8ff", speed: 70, life: 0.28, angle: -Math.PI / 2, spread: 1.1 });
       } else if (canWall) {
         // Kick away from the wall.
         this.vy = -JUMP_V * 0.92;
         this.vx = -this._wallDir * WALL_JUMP_VX;
         this.facing = -this._wallDir;
         this._buffer = 0; this._wallSliding = false;
-        this.jumpsLeft = this.character.maxJumps - 1; this.squash = 0.72;
+        this.jumpsLeft = this.character.maxJumps - 1; this.squash = 1.2;
         GG.bus.emit("player:jump", { index: this.index });
         level.fx.burst({ x: this.cx, y: this.cy, count: 8, color: "#cfd8ff", speed: 110, life: 0.3, glow: true });
       } else if (canAir) {
         // Lyra's double jump.
         this.vy = -JUMP_V * this.character.jumpScale * 0.9;
-        this._buffer = 0; this.jumpsLeft--; this.squash = 0.72;
+        this._buffer = 0; this.jumpsLeft--; this.squash = 1.2;
         GG.bus.emit("player:jump", { index: this.index });
         level.fx.burst({ x: this.cx, y: this.cy, count: 12, color: [this.character.body, "#fff"], speed: 130, life: 0.35, glow: true, angle: Math.PI / 2, spread: 1.2 });
       }
@@ -244,14 +247,33 @@
         if (Math.random() < 0.3) level.fx.burst({ x: this.x + (this._wallDir > 0 ? this.w : 0), y: this.cy, count: 1, color: "#cfd8ff", speed: 30, life: 0.3 });
       }
 
-      // Landing detection (squash + dust + sfx).
+      // Landing detection (squash + dust + sfx). Dust and shake scale with
+      // impact speed so hard landings feel HEAVY.
       if (this.onGround && !this._wasGround && this._fallSpeed > 260) {
-        this.squash = 0.68;
+        const hard = this._fallSpeed > 600;
+        this.squash = hard ? 0.58 : 0.66;
         GG.bus.emit("player:land", { index: this.index });
-        level.fx.burst({ x: this.cx, y: this.y + this.h, count: 8, color: "#cfd8ff", speed: 90, life: 0.3, angle: -Math.PI / 2, spread: 1.4 });
-        if (this._fallSpeed > 600) level.cam.shake(0.12);
+        level.fx.burst({
+          x: this.cx, y: this.y + this.h,
+          count: Math.min(18, 6 + (this._fallSpeed / 70) | 0),
+          color: "#cfd8ff", speed: 70 + this._fallSpeed * 0.1, life: 0.32,
+          angle: -Math.PI / 2, spread: 1.5,
+        });
+        if (hard) level.cam.shake(0.18);
+        else if (this._fallSpeed > 380) level.cam.shake(0.06);
       }
       this._wasGround = this.onGround;
+
+      // Footstep dust while running — small, constant ground feedback.
+      this._stepT = (this._stepT || 0) - dt;
+      if (this.onGround && Math.abs(this.vx) > 150 && this._stepT <= 0) {
+        this._stepT = 0.16;
+        level.fx.burst({
+          x: this.cx - this.facing * 6, y: this.y + this.h,
+          count: 2, color: "#cfd8ff", speed: 38, life: 0.24,
+          angle: -Math.PI / 2, spread: 0.7,
+        });
+      }
       this._fallSpeed = this.vy;
 
       // The airborne stack dissolves once the rider lands or drifts aside.
@@ -357,7 +379,11 @@
       // --- Dash (Nibihah): one mid-air burst, refreshed on landing --------
       if (ch.canDash) {
         if (this.onGround) this.dashesLeft = 1;
-        if (this.dashTime > 0) this.dashTime -= dt;
+        if (this.dashTime > 0) {
+          this.dashTime -= dt;
+          // afterimage trail while the dash is live
+          level.fx.burst({ x: this.cx, y: this.cy, count: 2, color: [ch.body, "#fff"], speed: 12, life: 0.22, glow: true });
+        }
         if (inp.specialPressed && this.dashesLeft > 0 && this.dashTime <= 0) {
           this.dashesLeft--; this.dashTime = DASH_TIME;
           this.dashDir = dir !== 0 ? dir : this.facing;

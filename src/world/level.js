@@ -810,7 +810,17 @@
      * authoritative physics — positions/channels come from host snapshots.
      */
     renderTick(dt) {
-      for (const o of this.objects) if ("t" in o) o.t += dt;
+      // Advance animation clocks — but NOT MovingPlatform/Rotor "t", which is
+      // path progress, not a clock; snapshots own it.
+      for (const o of this.objects) if ("t" in o && !(o instanceof O.MovingPlatform)) o.t += dt;
+      // Glide the remote hero toward the latest snapshot target so 60 Hz
+      // packets render as motion, not steps.
+      for (const p of this.players) {
+        if (p._netTX == null) continue;
+        p.x = U.damp(p.x, p._netTX, 22, dt);
+        p.y = U.damp(p.y, p._netTY, 22, dt);
+        if (Math.abs(p.x - p._netTX) + Math.abs(p.y - p._netTY) < 0.5) { p._netTX = p._netTY = null; }
+      }
       for (const p of this.players) { p.animName = p._poseState(); p.animTime = (p.animTime || 0) + dt; p.blink -= dt; if (p.blink < -0.2 && Math.random() < 0.04) p.blink = 0.12; }
       this._laserHits.clear();
       for (const l of this.lasers) this._traceLaser(l);
@@ -1572,6 +1582,18 @@
     renderLighting(ctx, cam, enabled, bloom) {
       if (bloom) this._renderBloom(ctx, cam);
       const vw = cam.viewW, vh = cam.viewH;
+      // Per-biome colour grade: a whisper of warm/cool laid over the whole
+      // frame ties world, characters and UI light into one palette.
+      const GRADE = {
+        cave: "rgba(80,130,255,0.05)", ruins: "rgba(90,200,220,0.05)",
+        forest: "rgba(255,220,120,0.06)", jungle: "rgba(255,220,120,0.06)",
+        temple: "rgba(255,180,90,0.06)", city: "rgba(140,190,255,0.06)",
+        ice: "rgba(140,190,255,0.06)", heart: "rgba(200,120,255,0.07)",
+        night: "rgba(200,120,255,0.07)", factory: "rgba(255,140,80,0.05)",
+        lab: "rgba(255,140,80,0.05)",
+      };
+      ctx.fillStyle = GRADE[this.theme] || GRADE.cave;
+      ctx.fillRect(0, 0, vw, vh);
       if (!enabled && !this.dark) {
         const v = ctx.createRadialGradient(vw / 2, vh / 2, vh * 0.35, vw / 2, vh / 2, vh * 0.8);
         v.addColorStop(0, "rgba(0,0,0,0)"); v.addColorStop(1, "rgba(0,0,0,0.4)");

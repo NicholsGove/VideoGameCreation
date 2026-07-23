@@ -670,6 +670,23 @@ function flatWith(objs, rows) {
      "the player's Figma eyes made it into both hero sprites");
   ok(typeof GG.drawSprite === "function", "the shared sprite renderer exists");
 }
+{ // netcode: platform/rotor positions re-derive from snapshots (client fix)
+  const plat = new GG.obj.MovingPlatform({ x: 0, y: 0, x2: 100, y2: 0 });
+  plat.setState({ t: 0.5, dir: 1 });
+  ok(Math.abs(plat.x - 50) < 0.01, "a snapshot moves a client-side platform");
+  const rot = new GG.obj.Rotor({ x: 200, y: 100, radius: 96 });
+  rot.setState(Math.round(Math.PI / 2 * 100));
+  ok(Math.abs((rot.y + rot.h / 2) - 196) < 2, "a snapshot swings a client-side rotor arm");
+}
+{ // netcode: stale packets on the unordered fast lane are dropped
+  const net = new GG.NetworkManager();
+  let got = [];
+  net.onState((d) => got.push(d));
+  net._onMessage({ t: "state", q: 5, d: "newer" });
+  net._onMessage({ t: "state", q: 3, d: "stale" });
+  net._onMessage({ t: "state", q: 6, d: "newest" });
+  ok(got.join(",") === "newer,newest", "late out-of-order snapshots never regress the view");
+}
 { // the Celestial Guardian is genuinely enormous
   const boss = new GG.obj.Boss({ x: 0, y: 0 });
   const hero = 30;                                   // Nichols' height in pixels

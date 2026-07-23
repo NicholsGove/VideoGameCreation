@@ -86,20 +86,48 @@
     }
 
     _bindConn(conn) {
+      // A second, UNRELIABLE connection labelled "fast" carries the per-frame
+      // input/state traffic. Reliable+ordered channels suffer head-of-line
+      // blocking — one lost packet on a wifi blip stalls every packet behind
+      // it, which players feel as a lag spike. Ephemeral state doesn't need
+      // redelivery: a fresher packet is always on the way.
+      if (conn.label === "fast") { this._bindFast(conn); return; }
       this.conn = conn;
       conn.on("open", () => {
         this.connected = true;
+        this._rxSeq = { input: -1, state: -1 };
         this._status("connected", this.code);
         GG.bus.emit("net:connected", { mode: this.mode });
         if (this._onOpen) { this._onOpen(); this._onOpen = null; }
         this._startPing();
+        // the client dials the fast lane once the control channel is up
+        if (this.mode === "client" && !this.fast) {
+          try {
+            this._bindFast(this.peer.connect(PREFIX + this.code, { label: "fast", reliable: false, ordered: false }));
+          } catch (_) { /* fast lane is an optimisation; ctl still works */ }
+        }
       });
       conn.on("data", (msg) => this._onMessage(msg));
       conn.on("close", () => { this.connected = false; this._status("closed"); GG.bus.emit("net:disconnected", {}); });
       conn.on("error", (e) => this._status("error", String(e)));
     }
 
+    _bindFast(conn) {
+      this.fast = conn;
+      conn.on("open", () => { this.fastOpen = true; });
+      conn.on("data", (msg) => this._onMessage(msg));
+      conn.on("close", () => { this.fastOpen = false; this.fast = null; });
+      conn.on("error", () => { this.fastOpen = false; });
+    }
+
     _onMessage(msg) {
+      // Unordered channel: stamp sequence numbers and drop anything stale —
+      // an old position arriving late must never overwrite a newer one.
+      if (msg.q != null && (msg.t === "input" || msg.t === "state")) {
+        this._rxSeq = this._rxSeq || { input: -1, state: -1 };
+        if (msg.q <= this._rxSeq[msg.t]) return;
+        this._rxSeq[msg.t] = msg.q;
+      }
       switch (msg.t) {
         case "input": if (this._handlers.input) this._handlers.input(msg.d); break;
         case "state": if (this._handlers.state) this._handlers.state(msg.d); break;
@@ -117,13 +145,20 @@
 
     _send(obj) { try { if (this.conn && this.connected) this.conn.send(obj); } catch (_) {} }
 
+    /** Per-frame traffic rides the unreliable lane (falls back to control). */
+    _sendFast(obj) {
+      obj.q = (this._txSeq = (this._txSeq || 0) + 1);
+      const c = (this.fastOpen && this.fast) || (this.connected && this.conn);
+      try { if (c) c.send(obj); } catch (_) {}
+    }
+
     // ---- Public API used by the game controller -------------------------
     onInput(fn) { this._handlers.input = fn; }      // host: receive client input
     onState(fn) { this._handlers.state = fn; }      // client: receive host snapshot
     onLevel(fn) { this._handlers.level = fn; }      // client: receive level/char setup
 
-    sendInput(input) { this._send({ t: "input", d: input }); }        // client -> host
-    sendState(snap)  { this._send({ t: "state", d: snap }); }         // host -> client
+    sendInput(input) { this._sendFast({ t: "input", d: input }); }    // client -> host
+    sendState(snap)  { this._sendFast({ t: "state", d: snap }); }     // host -> client
     sendLevel(info)  { this._send({ t: "level", d: info }); }         // host -> client
 
     isHost() { return this.mode === "host"; }
@@ -132,9 +167,11 @@
 
     close() {
       if (this._pingTimer) clearInterval(this._pingTimer);
+      try { if (this.fast) this.fast.close(); } catch (_) {}
       try { if (this.conn) this.conn.close(); } catch (_) {}
       try { if (this.peer) this.peer.destroy(); } catch (_) {}
       this.mode = "off"; this.peer = null; this.conn = null;
+      this.fast = null; this.fastOpen = false; this._txSeq = 0;
       this.connected = false; this.code = null;
       this._status("off");
     }

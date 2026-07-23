@@ -110,6 +110,7 @@
       this.level.beginTiming();
       this._wasWon = false;
       this.weather.setForLevel(data);
+      GG.audio.setMusicTheme(data.theme);      // soundtrack follows the biome
       // The Level only bounds the camera it was handed, so the split-screen
       // cameras need the same world bounds — otherwise they clamp to the
       // level's top-left corner and both halves show the start of the maze.
@@ -189,7 +190,29 @@
         b.attack = b.attack || !!inp.attackPressed;
         this._remoteInput = inp;
       });
-      GG.net.onState((snap) => { if (this.level) this.level.applySnapshot(snap); }); // client applies
+      GG.net.onState((snap) => {                                  // client applies + reconciles
+        if (!this.level) return;
+        const lvl = this.level;
+        const me = lvl.players[1], other = lvl.players[0];
+        const pred = { x: me.x, y: me.y, vx: me.vx, vy: me.vy, dead: me.dead };
+        const oPrev = { x: other.x, y: other.y };
+        lvl.applySnapshot(snap);
+        // OUR hero: the local prediction is fresher than the host's echo
+        // (which lags by a round-trip). Keep it unless the host disagrees
+        // hard — walls, deaths, teleports — then snap to the truth.
+        if (!me.dead && !pred.dead) {
+          const d = Math.hypot(me.x - pred.x, me.y - pred.y);
+          if (d < 90) {
+            me.x = pred.x + (me.x - pred.x) * 0.15;   // gentle drift to truth
+            me.y = pred.y + (me.y - pred.y) * 0.15;
+            me.vx = pred.vx; me.vy = pred.vy;
+          }
+        }
+        // The HOST's hero: glide to each snapshot instead of stepping —
+        // renderTick eases toward this target, hiding the packet cadence.
+        other._netTX = other.x; other._netTY = other.y;
+        other.x = oPrev.x; other.y = oPrev.y;
+      });
       GG.net.onLevel((info) => {                                  // client sets up level
         this.charAssign = info.chars || [0, 1];
         this.mode = "online"; this.role = "client";
@@ -269,6 +292,15 @@
     _sim(dt) {
       const lvl = this.level; if (!lvl) return;
 
+      // Hit-stop: on meaty hits the whole sim freezes for a few frames.
+      // Rendering continues, so the freeze reads as impact, not lag.
+      if (!this._hitWired) {
+        this._hitWired = true;
+        GG.bus.on("hit:stop", (e) => { this._hitStop = Math.max(this._hitStop || 0, (e && e.s) || 0.06); });
+        GG.bus.on("player:death", () => { this._deathFlash = 0.45; });
+      }
+      if (this._hitStop > 0) { this._hitStop -= dt; this._accum = 0; return; }
+
       // Assign inputs based on mode/role (press-edges buffered until consumed).
       if (this.mode === "local") {
         lvl.players[0].input = this._bufEdges(0, GG.input.snapshot(0));
@@ -283,9 +315,19 @@
       }
 
       if (this.role === "client" && this.mode === "online") {
-        // Client does NOT simulate authoritative physics; it only advances
-        // visuals and relies on host snapshots (applied via onState).
+        // The client never simulates AUTHORITATIVE physics — but it does
+        // PREDICT its own hero locally so controls feel instant instead of
+        // arriving a full round-trip late. Snapshots from the host remain
+        // the truth: onState reconciles the prediction against them.
         lvl.renderTick(dt);
+        this._accum += dt;
+        let psteps = 0;
+        while (this._accum >= C.FIXED_DT && psteps < 8) {
+          const me = lvl.players[1];
+          if (!me.dead) me.update(C.FIXED_DT, lvl);
+          this._accum -= C.FIXED_DT; psteps++;
+          me.input = Object.assign({}, me.input, { jumpPressed: false, specialPressed: false, attackPressed: false });
+        }
       } else {
         // Fixed-timestep authoritative simulation.
         this._accum += dt;
@@ -304,9 +346,10 @@
         this.fx.update(dt);
         // The edges were consumed by at least one step — release the buffer.
         if (steps > 0) this._edgeBuf = [{}, {}];
-        // Host broadcasts snapshots at ~30 Hz.
-        if (this.role === "host" && this.mode === "online") {
-          if ((this._netSendCtr++ & 1) === 0) GG.net.sendState(lvl.snapshot());
+        // Host broadcasts snapshots every frame (~60 Hz) — the fast lane is
+        // unreliable, so a lost packet just means the next one lands sooner.
+        if (this.role === "host" && this.mode === "online" && steps > 0) {
+          GG.net.sendState(lvl.snapshot());
         }
       }
 
@@ -412,6 +455,19 @@
 
       lvl.renderLighting(ctx, cam, g.lighting, g.bloom !== false);
       this.weather.renderFront(ctx, cam, lvl);
+
+      // Death flash: a red-black pulse that swallows the view and fades out
+      // as the fallen hero respawns.
+      if (this._deathFlash > 0) {
+        this._deathFlash -= dt;
+        const a = Math.max(0, this._deathFlash / 0.45);
+        ctx.fillStyle = `rgba(120,10,20,${a * 0.28})`;
+        ctx.fillRect(0, 0, vp.w, vp.h);
+        const v = ctx.createRadialGradient(vp.w / 2, vp.h / 2, vp.h * 0.2, vp.w / 2, vp.h / 2, vp.h * 0.75);
+        v.addColorStop(0, "rgba(0,0,0,0)");
+        v.addColorStop(1, `rgba(10,0,4,${a * 0.55})`);
+        ctx.fillStyle = v; ctx.fillRect(0, 0, vp.w, vp.h);
+      }
       ctx.restore();
     }
 

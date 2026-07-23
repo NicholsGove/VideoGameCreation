@@ -66,7 +66,9 @@
         this.collected = true;
         level.gemsCollected++;
         GG.bus.emit("gem:collected", { level });
-        level.fx.burst({ x: this.cx, y: this.cy, count: 14, color: [COLORS.gold.main, "#fff"], speed: 130, life: 0.5, size: 3, glow: true });
+        // two-stage sparkle: a fast white pop then slow drifting gold motes
+        level.fx.burst({ x: this.cx, y: this.cy, count: 10, color: "#fff", speed: 190, life: 0.25, size: 2, glow: true });
+        level.fx.burst({ x: this.cx, y: this.cy, count: 16, color: [COLORS.gold.main, "#fff8dc"], speed: 70, life: 0.7, size: 3, lift: 40, glow: true });
       }
     }
     getState() { return this.collected ? 1 : 0; }
@@ -295,7 +297,16 @@
       ctx.shadowBlur = 0;
     }
     getState() { return { t: Math.round(this.t * 1000) / 1000, dir: this.dir }; }
-    setState(s) { if (!s) return; this.t = s.t; this.dir = s.dir; }
+    setState(s) {
+      if (!s) return;
+      this.t = s.t; this.dir = s.dir;
+      // Recompute the position — on remote clients update() never runs, so
+      // without this the platform SITS STILL while the host rides it away.
+      const e = this._ease(this.t), px = this.x, py = this.y;
+      this.x = U.lerp(this.x0, this.x1, e);
+      this.y = U.lerp(this.y0, this.y1, e);
+      this.dx = this.x - px; this.dy = this.y - py;
+    }
   }
 
   // ------------------------------------------------------------------ Hazards (electric / poison / spikes)
@@ -498,7 +509,9 @@
       if (this.deadRat) return;
       this.hp--; this._flash = 0.18;
       this.vx = fromDir * 170; this.dir = -fromDir;
-      level.fx.burst({ x: this.cx, y: this.cy, count: 6, color: ["#c07bff", "#7a2b33"], speed: 90, life: 0.3 });
+      GG.bus.emit("hit:stop", { s: this.hp <= 0 ? 0.09 : 0.05 });   // meaty freeze-frame
+      level.cam.shake(this.hp <= 0 ? 0.12 : 0.05);
+      level.fx.burst({ x: this.cx, y: this.cy, count: 10, color: ["#c07bff", "#7a2b33"], speed: 110, life: 0.32 });
       if (this.hp <= 0) {
         this.deadRat = true;
         GG.bus.emit("crate:push", {});
@@ -577,6 +590,7 @@
       if (this.defeated) return;
       this.hp = Math.max(0, this.hp - dmg);
       this._flash = 0.15;
+      GG.bus.emit("hit:stop", { s: 0.05 });
       level.fx.burst({ x: this.cx + (fromDir || 0) * 30, y: this.cy, count: 8, color: ["#fff", "#c07bff"], speed: 130, life: 0.35, glow: true });
     }
     update(dt, level) {
@@ -1345,7 +1359,14 @@
       for (let i = 6; i < this.w - 6; i += 14) ctx.fillRect(this.x + i, this.y + 6, 8, 3);
     }
     getState() { return Math.round(this.a * 100); }
-    setState(s) { this.a = (s || 0) / 100; }
+    setState(s) {
+      this.a = (s || 0) / 100;
+      // as with MovingPlatform: clients must re-derive the arm position
+      const px = this.x, py = this.y;
+      this.x = this.hubX + Math.cos(this.a) * this.radius - this.w / 2;
+      this.y = this.hubY + Math.sin(this.a) * this.radius - this.h / 2;
+      this.dx = this.x - px; this.dy = this.y - py;
+    }
   }
 
   // ------------------------------------------------------------------ Portal (shared goal)

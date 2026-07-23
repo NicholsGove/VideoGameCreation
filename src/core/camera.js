@@ -53,8 +53,16 @@
         this._targetZoom = U.clamp(Math.min(zx, zy), 0.62, 1.15);
         this.zoom = U.damp(this.zoom, this._targetZoom, 4, dt);
 
+        // Look-ahead: lead the group's motion so players see where they're
+        // going — further when running, and downward while falling (Ori-style).
+        let lvx = 0, lvy = 0;
+        for (const t of pts) { lvx += t.vx || 0; lvy += t.vy || 0; }
+        lvx /= pts.length; lvy /= pts.length;
+        this._lookX = U.damp(this._lookX || 0, U.clamp(lvx * 0.24, -72, 72), 3, dt);
+        this._lookY = U.damp(this._lookY || 0, U.clamp(lvy > 0 ? lvy * 0.14 : lvy * 0.06, -26, 64), 3, dt);
+
         const vw = this.viewW / this.zoom, vh = this.viewH / this.zoom;
-        let tx = cx - vw / 2, ty = cy - vh / 2;
+        let tx = cx + this._lookX - vw / 2, ty = cy + this._lookY - vh / 2;
         // Clamp to level bounds.
         tx = U.clamp(tx, this.bounds.x, Math.max(this.bounds.x, this.bounds.w - vw));
         ty = U.clamp(ty, this.bounds.y, Math.max(this.bounds.y, this.bounds.h - vh));
