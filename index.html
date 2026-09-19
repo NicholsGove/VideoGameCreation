@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Echoes of Aether — Co-op Puzzle Platformer</title>
+  <title>Echoes of Aether — Co-op Open-World Adventure</title>
   <!-- Game-style fonts (pixel headings + fantasy body). Loads when online;
        falls back to the styled system stack in styles.css when offline. -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -48,10 +48,13 @@
   <!-- World + gameplay -->
   <script src="src/entities/sprites.js"></script>
   <script src="src/world/objects.js"></script>
+  <script src="src/world/creatures.js"></script>
   <script src="src/world/tilemap.js"></script>
   <script src="src/world/levels.js"></script>
+  <script src="src/world/worldgen.js"></script>
   <script src="src/world/level.js"></script>
   <script src="src/entities/player.js"></script>
+  <script src="src/world/world.js"></script>
 
   <!-- Networking -->
   <script src="src/net/network.js"></script>
@@ -62,6 +65,7 @@
   <!-- UI -->
   <script src="src/ui/title.js"></script>
   <script src="src/ui/cutscene.js"></script>
+  <script src="src/ui/worldmap.js"></script>
   <script src="src/ui/ui.js"></script>
 
   <!-- Game controller + bootstrap -->

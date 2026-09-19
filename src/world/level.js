@@ -74,6 +74,10 @@
       this.rats = this.objects.filter(o => o instanceof O.Rat);
       this.bosses = this.objects.filter(o => o instanceof O.Boss);
       this.projectiles = [];         // weapon fire: {x,y,vx,vy,from,arrow}
+      // Open-world creatures & barriers that weapons can hurt, and the shots
+      // creatures fire back (spores, laser bolts).
+      this.hittables = this.objects.filter(o => o.hittable);
+      this.hostiles = [];            // {x,y,vx,vy,r,life,grav,color,kind}
       // Story pets join after Chapter 2: Nova, a tiny celestial cat who walks
       // with Nichols, and Pip, a magical frog who hops after Nibihah.
       const pet = (kind, name, owner) => ({
@@ -122,7 +126,7 @@
         sentinel: O.Sentinel, watcher: O.Watcher, boss: O.Boss,
         tutor: O.Tutor, rat: O.Rat,
       };
-      const Cls = map[o.type];
+      const Cls = map[o.type] || (GG.OBJ_EXT && GG.OBJ_EXT[o.type]);
       if (!Cls) { console.warn("[Level] unknown object type:", o.type); return; }
       const inst = new Cls(o);
       this.objects.push(inst);
@@ -150,6 +154,9 @@
             o instanceof O.BridgeAnchor || o instanceof O.HiddenPlatform ||
             o instanceof O.Crumble || o instanceof O.Blinker) {
           const r = o.solidRect(); if (r) near.push(r);
+        } else if (o.dynSolid) {
+          // open-world pieces: room veils, light bridges, thorn barriers
+          const r = o.solidRect(entity); if (r) near.push(r);
         } else if (o instanceof O.Seesaw) {
           near.push(o.panL, o.panR);
         } else if (o instanceof O.NarrowGate) {
@@ -184,6 +191,7 @@
 
     // ---- Fixed-step simulation ------------------------------------------
     step(dt) {
+      this.age = (this.age || 0) + dt;             // seconds since the room was entered
       if (this.won) { this.winTimer += dt; return; }
       if (this.started) this.timeMs += dt * 1000;
       for (const p of this.players) p.pushing = false; // recomputed by crate/push passes
@@ -225,9 +233,9 @@
       // 4e) Weapons: Nichols' bolt gun, Nibihah's arrows (slight arc).
       for (const p of this.players) {
         p._atkCd = Math.max(0, (p._atkCd || 0) - dt);
-        if (!p.dead && p.input && p.input.attackPressed && p._atkCd === 0) {
+        if (!p.dead && p.input && p.input.attackPressed && p._atkCd === 0 && p.character.canShoot !== false) {
           p._atkCd = 0.45;
-          const arrow = p.character.canDash;      // the explorer shoots arrows
+          const arrow = p.character.id === "nibihah";   // the explorer shoots arrows
           // fire from the hip, not the chest — rats are ankle-height
           this.projectiles.push({
             x: p.cx + p.facing * 14, y: p.y + p.h - 12,
@@ -247,14 +255,34 @@
         for (const r of this.rats) {
           if (!r.deadRat && U.aabb(hit, r)) { r.takeHit(this, Math.sign(s.vx)); s.life = 0; break; }
         }
+        if (s.life > 0) for (const h of this.hittables) {
+          if (h.alive !== false && U.aabb(hit, h.hitRect ? h.hitRect() : h)) { h.takeHit(this, 1, Math.sign(s.vx)); s.life = 0; break; }
+        }
         if (s.life > 0) for (const b of this.bosses) {
           if (!b.defeated && U.aabb(hit, b)) { b.takeHit(this, 1, Math.sign(s.vx)); s.life = 0; break; }
         }
       }
       this.projectiles = this.projectiles.filter(s => s.life > 0);
+      for (const h of this.hostiles) {
+        h.vy += (h.grav || 0) * dt;
+        h.x += h.vx * dt; h.y += h.vy * dt; h.life -= dt;
+        if (this.tilemap.isSolid(Math.floor(h.x / C.TILE), Math.floor(h.y / C.TILE))) {
+          h.life = 0;
+          this.fx.burst({ x: h.x, y: h.y, count: 6, color: h.color || "#ff9aa4", speed: 60, life: 0.25 });
+          continue;
+        }
+        const r = h.r || 5, box = { x: h.x - r, y: h.y - r, w: r * 2, h: r * 2 };
+        for (const p of this.players) {
+          if (!p.dead && U.aabb(box, p)) { p.kill(this, h.kind || "shot"); h.life = 0; break; }
+        }
+      }
+      this.hostiles = this.hostiles.filter(h => h.life > 0);
 
       // 4f) A wiped party lets the rat nests recover (they never respawn otherwise).
-      if (this.players.every(p => p.dead)) for (const r of this.rats) r.reset();
+      if (this.players.every(p => p.dead)) {
+        for (const r of this.rats) r.reset();
+        for (const o of this.objects) if (o.onPartyWipe) o.onPartyWipe(this);
+      }
 
       // 4g) Nova and Pip trot after their heroes, sense nearby secrets, and
       //     fall asleep if nobody is going anywhere.
@@ -756,8 +784,10 @@
     }
 
     _traceLaser(laser) {
-      laser.segments = [];
-      if (!laser.active(this)) return;
+      laser.segments = []; laser.ghost = null;
+      const live = laser.active(this);
+      const warn = !live && laser.warning && laser.warning(this);
+      if (!live && !warn) return;
       const step = 4;
       let dir = DIRV[laser.dir].slice();
       let x = laser.cx, y = laser.cy, sx = x, sy = y, lastMirror = -1;
@@ -765,8 +795,7 @@
         x += dir[0] * step; y += dir[1] * step;
         if (x < 0 || y < 0 || x > this.tilemap.w || y > this.tilemap.h) break;
         // solid tile blocks the beam
-        const tid = this.tilemap.tileAtWorld(x, y);
-        if (tid !== GG.TILE.EMPTY && tid !== undefined && new Set([1,2,3,4,5,6]).has(tid)) break;
+        if (this.tilemap.isSolid(Math.floor(x / C.TILE), Math.floor(y / C.TILE))) break;
         // crate blocks the beam
         let blocked = false;
         for (const cr of this.crates) if (U.pointInRect(x, y, cr)) { blocked = true; break; }
@@ -780,9 +809,10 @@
           continue;
         }
         // player hit (lasers are lethal to everyone)
-        for (const p of this.players) if (!p.dead && U.pointInRect(x, y, p)) this._laserHits.add(p);
+        if (live) for (const p of this.players) if (!p.dead && U.pointInRect(x, y, p)) this._laserHits.add(p);
       }
       laser.segments.push({ x1: sx, y1: sy, x2: x, y2: y });
+      if (!live) { laser.ghost = laser.segments; laser.segments = []; }
     }
 
     _win() {
@@ -1195,13 +1225,30 @@
         night:   ["owl", "firefly", "moth", "bat"],
       };
       const cast = CASTS[this.theme] || CASTS.cave;
+      // Open-world rooms have real floors at many heights: ground animals
+      // settle onto the nearest surface below their home instead of floating.
+      const tm = this.tilemap, T = C.TILE;
+      const settle = (x, y) => {
+        let c = Math.floor(x / T), r = Math.floor(y / T);
+        c = U.clamp(c, 1, tm.cols - 2);
+        for (let k = 0; k < tm.rows; k++, r++) {
+          if (r >= tm.rows - 1) return null;
+          if (tm.at(c, r) === 0 && (tm.isSolid(c, r + 1) || tm.at(c, r + 1) === 7)) return (r + 1) * T - 4;
+        }
+        return null;
+      };
       const FLYERS = new Set(["butterfly", "firefly", "bird", "dragonfly", "bee", "moth", "bat", "leaf", "wisp", "scarab", "owl"]);
       this._ambient = [];
       const n = 22;
       for (let i = 0; i < n; i++) {
         const kind = cast[(rnd() * cast.length) | 0];
         const fly = FLYERS.has(kind);
-        const hx = rnd() * W, hy = fly ? rnd() * H * 0.7 : H * (0.55 + rnd() * 0.4);
+        const hx = rnd() * W;
+        let hy = fly ? rnd() * H * 0.7 : H * (0.55 + rnd() * 0.4);
+        if (this.data.roomId != null) {
+          if (!fly) { const sy = settle(hx, rnd() * H); if (sy == null) continue; hy = sy; }
+          else if (tm.isSolid(Math.floor(hx / T), Math.floor(hy / T))) continue;
+        }
         this._ambient.push({
           kind, fly, hx, hy,                      // home position
           x: hx, y: hy, vx: 0, vy: 0,
@@ -1258,10 +1305,13 @@
     _renderAmbient(ctx, cam) {
       if (!this._ambient) return;
       ctx.save();
+      // same transform as the world layer (zoom included) so wildlife sits on the ground
+      ctx.scale(cam.zoom, cam.zoom);
       ctx.translate(-cam.x, -cam.y);
+      const vw = cam.viewW / cam.zoom, vh = cam.viewH / cam.zoom;
       for (const a of this._ambient) {
         const sx = a.x - cam.x, sy = a.y - cam.y;
-        if (sx < -40 || sx > cam.viewW + 40 || sy < -40 || sy > cam.viewH + 40) continue;
+        if (sx < -40 || sx > vw + 40 || sy < -40 || sy > vh + 40) continue;
         this._drawCreature(ctx, a);
       }
       ctx.restore();
@@ -1532,6 +1582,20 @@
         }
         ctx.restore(); ctx.shadowBlur = 0;
       }
+      for (const h of this.hostiles) {
+        ctx.save();
+        ctx.fillStyle = h.color || "#ff9aa4"; ctx.shadowBlur = 10; ctx.shadowColor = h.color || "#ff9aa4";
+        if (h.kind === "bolt") {
+          const a = Math.atan2(h.vy, h.vx);
+          ctx.translate(h.x, h.y); ctx.rotate(a);
+          ctx.beginPath(); ctx.ellipse(0, 0, 8, 2.6, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.ellipse(2, 0, 3, 1.2, 0, 0, Math.PI * 2); ctx.fill();
+        } else {
+          ctx.beginPath(); ctx.arc(h.x, h.y, h.r || 5, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.beginPath(); ctx.arc(h.x - 1.5, h.y - 1.5, (h.r || 5) * 0.35, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
+      }
       for (const p of this.players) {
         // the swing rope, drawn beneath the hero
         if (p.swing) {
@@ -1638,6 +1702,9 @@
         players: this.players.map(p => p.getState()),
         objs: objState,
         broken: Array.from(this.tilemap._broken),
+        // shots in flight (so the online partner sees bolts, arrows and spores)
+        pj: this.projectiles.map(p => [Math.round(p.x), Math.round(p.y), Math.round(p.vx), Math.round(p.vy), p.arrow ? 1 : 0]),
+        hs: (this.hostiles || []).map(h => [Math.round(h.x), Math.round(h.y), Math.round(h.vx), Math.round(h.vy), h.kind === "bolt" ? 1 : 0]),
       };
     }
 
@@ -1652,6 +1719,8 @@
       if (s.players) s.players.forEach((ps, i) => this.players[i] && this.players[i].setState(ps));
       if (s.objs) for (const o of this.objects) if (s.objs[o.id] !== undefined && o.setState) o.setState(s.objs[o.id]);
       if (s.broken) this.tilemap._broken = new Set(s.broken);
+      if (s.pj) this.projectiles = s.pj.map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3], arrow: !!a[4], life: 0.1 }));
+      if (s.hs) this.hostiles = s.hs.map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3], kind: a[4] ? "bolt" : "spore", r: a[4] ? 4 : 5, color: a[4] ? "#ff6ad5" : "#caff7a", life: 0.1 }));
     }
   }
 

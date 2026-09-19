@@ -91,8 +91,77 @@
 
     resetBreakables() { this._broken.clear(); this._breakTimers = {}; }
 
+    /**
+     * Styled rendering (open world): each biome gets its own ground palette,
+     * surfaces get grass/snow/gold trim where exposed, and the whole static
+     * layer is baked once into an offscreen canvas and blitted per frame.
+     */
+    setStyle(style) { this.style = style; this._cache = null; }
+
+    _bake() {
+      const t = this.tile, st = this.style;
+      const cv = document.createElement("canvas");
+      cv.width = this.w; cv.height = this.h;
+      const cx = cv.getContext("2d");
+      if (!cx) return null;
+      const hash = (c, r) => (((c * 73856093) ^ (r * 19349663)) >>> 0) % 997;
+      const open = (c, r) => { const id = this.at(c, r); return id === 0 || id === 7; };
+      for (let r = 0; r < this.rows; r++) for (let c = 0; c < this.cols; c++) {
+        const id = this.at(c, r);
+        if (id === 0 || id === 4 || id === 5) continue;
+        const x = c * t, y = r * t, h = hash(c, r);
+        if (id === 1 || id === 2) {
+          const deep = !open(c, r - 1) && !open(c, r + 1) && !open(c - 1, r) && !open(c + 1, r);
+          cx.fillStyle = id === 1 ? st.ground : st.rock;
+          if (deep) cx.fillStyle = st.deep || cx.fillStyle;
+          cx.fillRect(x, y, t, t);
+          // texture flecks
+          cx.fillStyle = st.fleck;
+          cx.fillRect(x + (h % 22) + 3, y + ((h >> 3) % 20) + 5, 3, 2);
+          if (h % 3 === 0) cx.fillRect(x + ((h >> 2) % 20) + 6, y + ((h >> 5) % 18) + 8, 2, 2);
+          if (!deep && id === 2) { cx.fillStyle = st.rockLit; cx.fillRect(x + 2, y + 2, t - 4, 2); }
+          // exposed faces
+          if (open(c - 1, r)) { cx.fillStyle = st.edge; cx.fillRect(x, y, 3, t); }
+          if (open(c + 1, r)) { cx.fillStyle = st.edge; cx.fillRect(x + t - 3, y, 3, t); }
+          if (open(c, r + 1)) { cx.fillStyle = st.edge; cx.fillRect(x, y + t - 3, t, 3);
+            if (st.drip && h % 5 === 0) { cx.fillStyle = st.drip; cx.fillRect(x + (h % 24) + 4, y + t, 3, 4 + (h % 5)); } }
+          if (open(c, r - 1)) {
+            cx.fillStyle = st.top; cx.fillRect(x, y, t, 6);
+            cx.fillStyle = st.grass; cx.fillRect(x, y, t, 3);
+            if (st.tuft && h % 4 === 0) { cx.fillStyle = st.tuft; cx.fillRect(x + (h % 26) + 2, y - 3, 2, 3); cx.fillRect(x + (h % 26) + 5, y - 5, 2, 5); }
+          }
+        } else {
+          this._drawTile(cx, id, x, y, t, c, r);
+        }
+      }
+      return cv;
+    }
+
     render(ctx, cam) {
       const t = this.tile;
+      if (this.style) {
+        if (!this._cache || this._cacheBroken !== this._broken.size) {
+          this._cache = this._bake(); this._cacheBroken = this._broken.size;
+        }
+        if (this._cache) {
+          const vx = Math.max(0, Math.floor(cam.x)), vy = Math.max(0, Math.floor(cam.y));
+          const vw = Math.min(this.w - vx, Math.ceil(cam.viewW / cam.zoom) + 2);
+          const vh = Math.min(this.h - vy, Math.ceil(cam.viewH / cam.zoom) + 2);
+          if (vw > 0 && vh > 0) ctx.drawImage(this._cache, vx, vy, vw, vh, vx, vy, vw, vh);
+          // animated conveyors on top
+          const c0 = Math.max(0, Math.floor(cam.x / t)), c1 = Math.min(this.cols - 1, Math.floor((cam.x + cam.viewW / cam.zoom) / t) + 1);
+          const r0 = Math.max(0, Math.floor(cam.y / t)), r1 = Math.min(this.rows - 1, Math.floor((cam.y + cam.viewH / cam.zoom) / t) + 1);
+          if (this._hasConveyor !== false) {
+            let any = false;
+            for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+              const id = this.at(c, r);
+              if (id === 4 || id === 5) { any = true; this._drawTile(ctx, id, c * t, r * t, t, c, r); }
+            }
+            if (!any && r0 === 0 && c0 === 0) this._hasConveyor = undefined;
+          }
+          return;
+        }
+      }
       const c0 = Math.max(0, Math.floor(cam.x / t));
       const c1 = Math.min(this.cols - 1, Math.floor((cam.x + cam.viewW / cam.zoom) / t) + 1);
       const r0 = Math.max(0, Math.floor(cam.y / t));

@@ -24,6 +24,15 @@
       check: (s) => Object.values(s.progress).filter(p => p.completed).length >= GG.LEVEL_COUNT },
     { id: "all_gems",     name: "Collector",        desc: "Collect 100 gems total.",
       check: (s) => s.totalGems >= 100 },
+    // ---- the open-world journey
+    { id: "w_power",      name: "Awakened",         desc: "Claim your first power at a shrine.",
+      check: (s, c) => c && c.world && c.world.powers >= 1 },
+    { id: "w_half",       name: "Halfway There",    desc: "Discover 50% of the world.",
+      check: (s, c) => c && c.world && c.world.pct >= 50 },
+    { id: "w_powers",     name: "Every Gift",       desc: "Claim all eight powers.",
+      check: (s, c) => c && c.world && c.world.powers >= 8 },
+    { id: "w_map",        name: "Cartographers",    desc: "Discover 100% of the world.",
+      check: (s, c) => c && c.world && c.world.pct >= 100 },
   ];
 
   class Achievements {

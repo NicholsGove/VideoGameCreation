@@ -144,9 +144,9 @@
       let on = false;
       // `needsCrate` plates are too heavy for a hero — only cargo triggers them.
       if (!this.needsCrate) for (const p of level.players) if (!p.dead && U.aabb(p, sensor)) on = true;
-      for (const c of level.crates) if (!c.carried && U.aabb(c, sensor)) on = true;
+      for (const c of level.crates) if (!c.carried && U.aabb(c, sensor) && (!this.teleOnly || c.tele)) on = true;
       // a sentinel's weight counts too — lure it into position
-      for (const e of (level.enemies || [])) if (U.aabb(e, sensor)) on = true;
+      if (!this.teleOnly) for (const e of (level.enemies || [])) if (U.aabb(e, sensor)) on = true;
       this.pressed = on;
       level.setChannel(this.channel, on || level.channelForcedBy(this.channel, this));
       if (on && !wasPressed) GG.bus.emit("button:pressed", { channel: this.channel });
@@ -177,7 +177,7 @@
       for (const p of level.players) {
         if (p.dead) continue;
         if (this.colorLock && p.character.color !== this.colorLock) continue;
-        if (U.aabb(p, this) && p.input && p.input.action && this._cool === 0) {
+        if (U.aabb(p, this) && p.input && p.input.action && this._cool === 0 && !(this.latch && this.on)) {
           this.on = !this.on; this._cool = 0.35;
           GG.bus.emit("switch:toggled", { channel: this.channel, on: this.on });
           level.fx.burst({ x: this.cx, y: this.cy, count: 8, color: (COLORS[this.colorLock || this.color] || COLORS.gold).main, speed: 70, life: 0.3 });
@@ -210,10 +210,14 @@
     constructor(cfg) { super(Object.assign({ w: C.TILE, h: C.TILE * 2, color: "blue", invert: false, timedMs: 0 }, cfg)); this.open = false; this._openTimer = 0; }
     update(dt, level) {
       // `channels` (array) = AND logic: every listed signal must be active.
-      let sig = this.channels
-        ? this.channels.every(c => level.getChannel(c))
-        : level.getChannel(this.channel);
+      // `need` = [[a,b],[c]] -> (a OR b) AND c  (symmetric open-world puzzles)
+      let sig = this.need
+        ? this.need.every(g => g.some(c => level.getChannel(c)))
+        : this.channels
+          ? this.channels.every(c => level.getChannel(c))
+          : level.getChannel(this.channel);
       if (this.invert) sig = !sig;
+      if (this.latch && this.open) sig = true;          // once opened, stays open
       const was = this.open;
       if (sig) this._openTimer = this.timedMs / 1000;
       else this._openTimer = Math.max(0, this._openTimer - dt);
@@ -378,13 +382,33 @@
   class Laser extends GObj {
     // Emits a beam in `dir` ("up/down/left/right"). Beam is traced by the Level
     // (needs mirrors + solids), then stored in this.segments for hit-testing.
+    // TIMED lasers (`period`, `onTime`, `phase`) pulse on a clock shared with
+    // the level timer (so host and client agree), flickering a warning first.
     constructor(cfg) { super(Object.assign({ w: C.TILE, h: C.TILE, dir: "right" }, cfg)); this.segments = []; this.t = 0; }
-    active(level) { return this.channel == null ? true : (this.invert ? !level.getChannel(this.channel) : level.getChannel(this.channel)); }
+    _clock(level) { return (((level.timeMs || 0) / 1000 + (this.phase || 0)) % this.period + this.period) % this.period; }
+    active(level) {
+      let on = this.channel == null ? true : (this.invert ? !level.getChannel(this.channel) : level.getChannel(this.channel));
+      if (on && this.period) on = this._clock(level) < (this.onTime || this.period / 2);
+      return on;
+    }
+    warning(level) {
+      if (!this.period) return false;
+      const on = this.channel == null ? true : (this.invert ? !level.getChannel(this.channel) : level.getChannel(this.channel));
+      return on && this._clock(level) > this.period - 0.75;
+    }
     update(dt) { this.t += dt; }
     render(ctx, level) {
       // emitter housing
       ctx.fillStyle = "#5a2b33"; ctx.fillRect(this.x + 4, this.y + 4, this.w - 8, this.h - 8);
       ctx.fillStyle = COLORS.red.main; ctx.beginPath(); ctx.arc(this.cx, this.cy, 5, 0, Math.PI * 2); ctx.fill();
+      if (this.ghost && this.ghost.length) {            // about to fire: a flickering sight-line
+        ctx.save();
+        ctx.globalAlpha = 0.35 + 0.35 * Math.sin(this.t * 40);
+        ctx.strokeStyle = COLORS.red.glow; ctx.lineWidth = 1; ctx.setLineDash([6, 5]);
+        ctx.beginPath();
+        for (const s of this.ghost) { ctx.moveTo(s.x1, s.y1); ctx.lineTo(s.x2, s.y2); }
+        ctx.stroke(); ctx.restore();
+      }
       if (!this.active(level)) return;
       // beam
       ctx.strokeStyle = COLORS.red.main; ctx.lineWidth = 3 + Math.sin(this.t * 20) * 0.6;
@@ -1035,7 +1059,8 @@
         // (the cooldown stops the very press that released it from re-grabbing)
         for (const p of level.players) {
           if (this._grabCool > 0) break;
-          if (p.dead || !p.character.canBuild) continue;                          // Nichols' gift
+          const canTele = p.character.canTele != null ? p.character.canTele : p.character.canBuild;
+          if (p.dead || !canTele) continue;                                       // Nichols' gift
           if (!p.input || !p.input.specialPressed) continue;
           if (Math.hypot(p.cx - this.cx, p.cy - this.cy) > this.range) continue;
           if (level.energy < 6) continue;
@@ -1087,7 +1112,8 @@
     update(dt, level) {
       this.t += dt;
       for (const p of level.players) {
-        if (p.dead || !p.character.canDash || p.swing) continue;               // Nibihah's gift
+        const canSwing = p.character.canSwing != null ? p.character.canSwing : p.character.canDash;
+        if (p.dead || !canSwing || p.swing) continue;                          // Nibihah's gift
         if (!p.input || !p.input.specialPressed) continue;
         const dx = p.cx - this.cx, dy = p.cy - this.cy;
         const d = Math.hypot(dx, dy);
@@ -1681,7 +1707,7 @@
         if (p.dead || !p.character.canGrapple) continue;
         if (!p.input || !p.input.specialPressed) continue;
         const dx = this.cx - p.cx, dy = Math.abs(this.cy - p.cy);
-        if (Math.abs(dx) < this.range && dy < 48 && Math.sign(dx) === p.facing && this._cool === 0) {
+        if (Math.abs(dx) < this.range && dy < 48 && Math.sign(dx) === p.facing && this._cool === 0 && !(this.latch && this.on)) {
           this.on = !this.on; this._cool = 0.35;
           p.grappleFx = { x: this.cx, y: this.cy, t: 0.25 };
           GG.bus.emit("switch:toggled", { channel: this.channel, on: this.on });

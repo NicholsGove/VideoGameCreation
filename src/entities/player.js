@@ -187,7 +187,7 @@
 
       const wantJump = this._buffer > 0;
       const canGround = wantJump && this._coyote > 0;
-      const canWall = wantJump && this._wallSliding && !this.onGround;
+      const canWall = wantJump && this._wallSliding && !this.onGround && this.character.canWallJump !== false;
       const canAir = wantJump && !this.onGround && this._coyote <= 0 && this.jumpsLeft > 0 && this.character.maxJumps > 1;
 
       if (canGround) {
@@ -231,7 +231,10 @@
       this.dropThrough = !!inp.down && !this.onGround ? true : (!!inp.down && this.groundRef && this.groundRef.oneWay);
 
       // Integrate with collision against the level's full solid set.
-      const solids = level.solidsFor(this);
+      let solids = level.solidsFor(this);
+      // Holding DOWN drops you through one-way ledges (and keeps you falling
+      // through them while you hold it).
+      if (this.dropThrough) solids = solids.filter(s => !s.oneWay);
       const px = this.x, py = this.y;
       const dx = (this.vx + conveyor) * dt;
       GG.Physics.move(this, dx, this.vy * dt, solids);
@@ -240,7 +243,7 @@
       // Wall-slide detection: airborne, pressing into a wall, descending.
       this._wallDir = this.hitWallDir;
       const pressingWall = (inp.right && this._wallDir > 0) || (inp.left && this._wallDir < 0);
-      this._wallSliding = !this.onGround && this.vy > 0 && pressingWall;
+      this._wallSliding = !this.onGround && this.vy > 0 && pressingWall && this.character.canWallJump !== false;
       if (this._wallSliding) {
         // climbGrip < 1 means a better climber descends more slowly (Nibihah).
         this.vy = Math.min(this.vy, WALL_SLIDE_MAX * (this.character.climbGrip ?? 1));

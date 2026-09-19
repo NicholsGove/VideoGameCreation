@@ -57,7 +57,7 @@
         return;
       }
       // Prevent the browser scrolling on arrows/space during play.
-      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
+      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space","Tab"].includes(e.code)) e.preventDefault();
       if (!this._down.has(e.code)) this._pressed.add(e.code);
       this._down.add(e.code);
     }
@@ -100,6 +100,33 @@
         special: this.action(p, "special") || !!pad.special,
         specialPressed: this.actionPressed(p, "special") || !!pad.specialPressed,
         attackPressed: this.actionPressed(p, "attack") || !!pad.attackPressed,
+      };
+    }
+
+    /**
+     * Online play: each machine controls exactly ONE hero, and only with that
+     * hero's own keys — Player 1 (host) uses WASD + Q/E/F, Player 2 (client)
+     * uses the arrows + Right-Shift/./slash. The other set is ignored, so
+     * nobody can steer with the partner's controls. The local machine's FIRST
+     * gamepad (if any) also drives this hero.
+     */
+    snapshotOnline(p) {
+      const b = this.bindings["p" + p] || {};
+      const pad = this.pads[0] || {};
+      const down = (a) => this._down.has(b[a]);
+      const pressed = (a) => this._pressed.has(b[a]);
+      const pingKey = p === 0 ? "KeyF" : "Slash";
+      return {
+        left: down("left") || !!pad.left,
+        right: down("right") || !!pad.right,
+        up: down("up") || !!pad.up || !!pad.jump,
+        down: down("down") || !!pad.down,
+        jumpPressed: pressed("up") || !!pad.jumpPressed,
+        action: down("action") || !!pad.action,
+        special: down("special") || !!pad.special,
+        specialPressed: pressed("special") || !!pad.specialPressed,
+        attackPressed: pressed("attack") || !!pad.attackPressed,
+        pingPressed: this._pressed.has(pingKey),
       };
     }
 

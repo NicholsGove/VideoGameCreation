@@ -1,4 +1,45 @@
-# Echoes of Aether — Advanced Co-op Mechanics Design Doc
+# Echoes of Aether — Design Doc
+
+## 0. The Journey (open world) — current main mode
+
+**Structure.** A deterministic world (`worldgen.js`, seed 20260919) on a grid of
+cells (1 cell = 32×18 tiles ≈ one screen). Rooms are 1×1 … 4×1 / 3×2 cells.
+Region k is entered through a gate needing region k-1's power; its shrine sits
+in its deepest room. Two bonus vaults per region are sealed by *later* powers.
+Discovery % = explored cells / all cells; 100% → ending cinematic → final screen.
+
+**Doorways.** Side doors (rows 12–15 of a cell) and up/down doors (a 4-wide gap
+at cols 14–17; up has a one-way ledge under it, down is a 2-deep pit). The
+`Passage` object needs BOTH heroes inside its zone; arriving disarms it until
+both step out. Stacked cells in one room link through a single shaft per storey.
+
+**Cells.** Every cell gets one chunk: `shaft` (staircase / lift / crumbling steps
+/ laser sweep), `simple` (a floor hole plus side hazards), `treasure` (dead end:
+a hazard run to a gem altar + story tablet), `gate`, `shrine`, or a symmetric
+MODULE — co-op puzzles (boostwall, twolever, holddoor, heavycrate, tandem, runes,
+key, timed, battery, elements), hazard runs (spikes, lasers, blades, crumble,
+mplat), fights (arena, creatures) and power trials (dblwall, throwplate,
+dashgap, grapplegap, swinggap, telelift). Symmetric = solvable from whichever
+side you arrive.
+
+**Power gates** keep the floor corridor clear once opened:
+arms → thorn barrier you shoot · wallgrip → lever atop a hanging chimney ·
+skystep → lever on a shelf 6 up · strongarms → cargo plate on a shelf 3 up ·
+winddash → lever island past an 8-wide spike strip · grapple → green lever on
+an unreachable shelf level with Nichols' ledge · swing → lever island past an
+11-wide pit with a ring · tele → mind-cube-only plate on a shelf.
+
+**Measured jump limits** (used by the solver and all geometry): single jump
+climbs 3 tiles / clears 4; head-boost climbs 4; Sky Step climbs 6 / clears 6;
+Sky Step + Wind Dash clears 8.
+
+**Verification.** `tests/world.js` (two-hero reachability solver with staged
+channels, gates sealed/opened, return trips, idle safety, render),
+`tests/powers.js` (physics bots perform each trial), `tests/online.js`.
+
+---
+
+# Advanced Co-op Mechanics (classic campaign)
 
 This documents the systems shipped in the "advanced difficulty" pass: what was
 built, the exact parameters, and how to playtest it. Everything here is

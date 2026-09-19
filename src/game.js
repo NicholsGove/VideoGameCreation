@@ -85,7 +85,116 @@
     applySettings() { this._applySettings(GG.save.settings); }
 
     // ---- Session lifecycle ----------------------------------------------
+    // ---- Open world ---------------------------------------------------------
+    /** Local co-op journey through the open world. fresh=true starts over. */
+    startWorld(fresh) {
+      this.mode = "local"; this.role = "host";
+      this.worldMode = true; this.mapOpen = false;
+      GG.audio.resume(); GG.audio.startMusic();
+      const st = GG.world.begin(fresh);
+      this._loadRoom(st.room, st.door, { banner: true });
+      this.state = "playing";
+      GG.ui.hideMenus(); GG.ui.showHUD();
+      if (fresh) setTimeout(() => GG.ui.toast("🗺 Explore together", "Discover 100% of the world to finish"), 1200);
+    }
+
+    /** Online journey: the host's save drives the world; the client mirrors it. */
+    startWorldOnline(role) {
+      this.mode = "online"; this.role = role;
+      this.worldMode = true; this.mapOpen = false;
+      GG.audio.resume(); GG.audio.startMusic();
+      if (role === "host") {
+        const st = GG.world.begin(false);
+        this._loadRoom(st.room, st.door, { banner: true });
+        this.state = "playing";
+        GG.ui.hideMenus(); GG.ui.showHUD();
+        this._broadcastRoom();
+      }
+    }
+
+    _broadcastRoom(extra) {
+      if (this.mode !== "online" || this.role !== "host") return;
+      GG.net.sendLevel(Object.assign(GG.world.syncInfo(), { chars: this.charAssign }, extra || {}));
+    }
+
+    /** Build and enter a room of the open world. */
+    _loadRoom(roomId, door, opts) {
+      opts = opts || {};
+      const prevRegion = this.level && this.level.data ? this.level.data.region : null;
+      this.fx.clear();
+      this.level = GG.world.makeLevel(roomId, door, this.cam, this.fx, this.charAssign);
+      const lvl = this.level, data = lvl.data;
+      this.levelId = data.id;
+      this._wasWon = false;
+      lvl.onPassage = (pas) => this._travel(pas);
+      lvl.onPower = (power) => this._onPowerGained(power);
+      this.weather.setForLevel(data);
+      GG.audio.setMusicTheme(data.theme);
+      const tw = lvl.tilemap.w, th = lvl.tilemap.h;
+      this.camL.setBounds(tw, th); this.camR.setBounds(tw, th);
+      for (let i = 0; i < 30; i++) this.cam.update(0.1, lvl.players);   // settle instantly
+      this.camL.update(0.0001, [lvl.players[0]]); this.camR.update(0.0001, [lvl.players[1]]);
+      if (opts.banner || prevRegion !== data.region) {
+        this._banner = { t: 0, title: data.biome, sub: data.name !== data.biome ? data.name : "" };
+      } else if (data.name !== data.biome) {
+        this._banner = { t: 0, title: data.name, sub: "", small: true };
+      }
+      this._travelFade = { t: 0, phase: "in" };
+      // stepping into the very last unexplored room completes the map
+      if (!(this.mode === "online" && this.role === "client") && GG.world.complete && !GG.world.state.done) this._worldEnding();
+    }
+
+    /** Both heroes stepped into a doorway: carry the party to the next room. */
+    _travel(pas) {
+      if (this.mode === "online" && this.role === "client") return;
+      if (this._travelFade && this._travelFade.phase === "out") return;
+      const lvl = this.level;
+      GG.world.captureRoom(lvl);
+      const dest = GG.world.destination(lvl.roomId, pas.door);
+      GG.world.state.room = dest.room; GG.world.state.door = dest.door;
+      GG.world.persist();
+      GG.bus.emit("teleport:used", {});
+      this._travelFade = { t: 0, phase: "out", dest };
+    }
+
+    _finishTravel(dest) {
+      this._loadRoom(dest.room, dest.door);
+      this._broadcastRoom();
+    }
+
+    _onPowerGained(power) {
+      const lvl = this.level;
+      if (GG.world.grantPower(power, lvl)) {
+        GG.audio.sfx("achieve"); setTimeout(() => GG.audio.sfx("victory"), 350);
+        GG.ui.showPowerGained(power);
+        this._broadcastRoom({ update: true, power });
+      }
+    }
+
+    toggleMap(force) {
+      if (!this.worldMode || !this.level) return;
+      this.mapOpen = force != null ? force : !this.mapOpen;
+      GG.bus.emit(this.mapOpen ? "ui:nav" : "ui:transition");
+    }
+
+    /** 100% discovered: the Heart wakes and the story ends. */
+    _worldEnding() {
+      if (this._ending) return;
+      this._ending = true;
+      const st = GG.world.state;
+      st.done = true;
+      GG.world.persist();
+      const stats = { timeMs: st.timeMs, deaths: st.deaths, gems: st.gems, slain: st.slain, powers: st.powers.length, pct: GG.world.percent };
+      this._broadcastRoom({ ending: true, stats });
+      GG.ui.toast("✦ 100% DISCOVERED ✦", "The Heart of Aether awakens…");
+      setTimeout(() => {
+        this.mapOpen = false;
+        this.playCutscene("ch6_end", () => { this._ending = false; this.worldMode = false; GG.ui.showWorldEnd(stats); });
+      }, 2600);
+    }
+
     startLocal(levelId) {
+      this.worldMode = false;
       this.mode = "local"; this.role = "host";
       GG.audio.resume(); GG.audio.startMusic();
       this._loadLevel(levelId || 1);
@@ -94,6 +203,7 @@
     }
 
     startOnline(role, levelId) {
+      this.worldMode = false;
       this.mode = "online"; this.role = role;
       GG.audio.resume(); GG.audio.startMusic();
       this._loadLevel(levelId || 1);
@@ -126,8 +236,19 @@
       GG.bus.emit("level:loaded", { id, name: data.name, hint: data.hint });
     }
 
-    restartLevel() {
+    restartLevel(resetRoom) {
       if (this.mode === "online" && this.role === "client") return; // host controls
+      if (this.worldMode) {
+        // back to the doorway you came in by (optionally resetting the room)
+        const lvl = this.level;
+        if (resetRoom) delete GG.world.state.rooms[lvl.roomId];
+        else GG.world.captureRoom(lvl);
+        this._loadRoom(lvl.roomId, GG.world.state.door);
+        this.state = "playing";
+        this._broadcastRoom();
+        GG.ui.hideMenus(); GG.ui.showHUD();
+        return;
+      }
       this._loadLevel(this.levelId);
       this.state = "playing";
       if (this.mode === "online" && this.role === "host") this._broadcastLevel();
@@ -162,6 +283,8 @@
     }
 
     toMenu() {
+      if (this.worldMode && this.level && !GG.world.remote) { GG.world.captureRoom(this.level); GG.world.persist(); }
+      this.worldMode = false; this.mapOpen = false;
       this.state = "menu"; this.level = null;
       if (this.mode === "online") GG.net.close();
       this.mode = "local";
@@ -183,12 +306,23 @@
     // ---- Networking wiring ----------------------------------------------
     _wireNet() {
       GG.net.onInput((inp) => {                                   // host receives client input
-        // a press-edge in one packet must not be erased by the next packet
+        // Edges arrive as running counters (robust to dropped packets): any
+        // increase since the last packet is a fresh press.
+        const seen = this._remoteSeen || (this._remoteSeen = { j: 0, s: 0, a: 0, p: 0 });
         const b = this._edgeBuf[1];
-        b.jump = b.jump || !!inp.jumpPressed;
-        b.special = b.special || !!inp.specialPressed;
-        b.attack = b.attack || !!inp.attackPressed;
-        this._remoteInput = inp;
+        if (inp.nj != null) {
+          if (inp.nj > seen.j) b.jump = true;
+          if (inp.ns > seen.s) b.special = true;
+          if (inp.na > seen.a) b.attack = true;
+          if (inp.np > seen.p) this._remotePing = true;
+          seen.j = Math.max(seen.j, inp.nj); seen.s = Math.max(seen.s, inp.ns);
+          seen.a = Math.max(seen.a, inp.na); seen.p = Math.max(seen.p, inp.np);
+        } else {
+          b.jump = b.jump || !!inp.jumpPressed;
+          b.special = b.special || !!inp.specialPressed;
+          b.attack = b.attack || !!inp.attackPressed;
+        }
+        this._remoteInput = Object.assign({}, inp, { jumpPressed: false, specialPressed: false, attackPressed: false });
       });
       GG.net.onState((snap) => {                                  // client applies + reconciles
         if (!this.level) return;
@@ -214,12 +348,29 @@
         other.x = oPrev.x; other.y = oPrev.y;
       });
       GG.net.onLevel((info) => {                                  // client sets up level
+        if (info.world) {
+          this.charAssign = info.chars || [0, 1];
+          GG.world.mirror(info);
+          if (info.ending) { this.worldMode = false; this.playCutscene("ch6_end", () => GG.ui.showWorldEnd(info.stats || {})); return; }
+          if (info.update) {
+            if (this.level) GG.world.applyPowers(this.level);
+            if (info.power) GG.ui.showPowerGained(info.power);
+            return;
+          }
+          this.mode = "online"; this.role = "client"; this.worldMode = true;
+          this._loadRoom(info.room, info.door);
+          this.state = "playing";
+          GG.ui.hideMenus(); GG.ui.showHUD();
+          return;
+        }
         this.charAssign = info.chars || [0, 1];
         this.mode = "online"; this.role = "client";
         this._loadLevel(info.id);
         this.state = "playing";
         GG.ui.hideMenus(); GG.ui.showHUD();
       });
+      // fresh press-counters for every new connection
+      GG.bus.on("net:connected", () => { this._remoteSeen = null; this._edgeN = null; });
       GG.bus.on("net:disconnected", () => {
         if (this.mode === "online") GG.ui.toast("Connection lost", "Returning to menu");
         this.toMenu();
@@ -233,7 +384,12 @@
         GG.save.addGems(res.gems);
         this.achievements.evaluate(res);
       });
-      GG.bus.on("player:death", () => { GG.save.addDeath(); });
+      GG.bus.on("player:death", () => { GG.save.addDeath(); if (this.worldMode && GG.world.state && !GG.world.remote) GG.world.state.deaths++; });
+      const worldAchv = () => { if (this.worldMode && GG.world.state && this.achievements) this.achievements.evaluate({ world: { pct: GG.world.percent, powers: GG.world.state.powers.length } }); };
+      GG.bus.on("power:gained", worldAchv);
+      GG.bus.on("map:discovered", worldAchv);
+      GG.bus.on("creature:slain", () => { if (this.worldMode && GG.world.state) GG.world.state.slain = (GG.world.state.slain || 0) + 1; });
+      GG.bus.on("gem:collected", () => { if (this.worldMode && GG.world.state) GG.world.state.gems = (GG.world.state.gems || 0) + 1; });
     }
 
     // ---- Per-frame -------------------------------------------------------
@@ -246,22 +402,39 @@
 
       // Global hotkeys (keyboard Esc or gamepad Start).
       if (GG.input.globalPressed("pause") || GG.input.padStartPressed) {
-        if (this.state === "playing") this.pause();
+        if (this.mapOpen) this.toggleMap(false);
+        else if (this.state === "playing") this.pause();
         else if (this.state === "paused") this.resume();
       }
       if (this.state === "playing" && GG.input.globalPressed("restart")) this.restartLevel();
+      // World map: M or Tab (Esc also closes it)
+      if (this.worldMode && (this.state === "playing" || this.state === "paused") &&
+          (GG.input.wasPressed("KeyM") || GG.input.wasPressed("Tab"))) {
+        if (this.state === "paused") { this.resume(); this.toggleMap(true); } else this.toggleMap();
+      }
       // Co-op pings: F marks for Player 1, / (slash) for Player 2.
       if (this.state === "playing" && this.level) {
         const ping = (p) => {
           this.level.pings.push({ x: p.cx, y: p.y - 26, t: 3, color: p.character.body });
           GG.audio.sfx("uihover");
         };
-        if (GG.input.wasPressed("KeyF")) ping(this.level.players[0]);
-        if (GG.input.wasPressed("Slash")) ping(this.level.players[1]);
+        if (this.mode === "local") {
+          if (GG.input.wasPressed("KeyF")) ping(this.level.players[0]);
+          if (GG.input.wasPressed("Slash")) ping(this.level.players[1]);
+        } else if (this.role === "host") {
+          if (GG.input.wasPressed("KeyF")) ping(this.level.players[0]);
+          if (this._remotePing) { this._remotePing = false; ping(this.level.players[1]); }
+        }
       }
 
       if (this.state === "playing") {
-        this._sim(dt);
+        const tf = this._travelFade;
+        if (tf && tf.phase === "out") {
+          tf.t += dt;
+          if (tf.t >= 0.24) { const d = tf.dest; this._travelFade = null; this._finishTravel(d); }
+        } else if (!(this.mapOpen && this.mode === "local")) {
+          this._sim(dt);
+        }
       }
 
       this._render(dt);
@@ -269,14 +442,10 @@
       GG.input.endFrame();
     }
 
-    _buildLocalInput(playerIndex) {
-      // Merge WASD + Arrow bindings so a single online player can use either.
-      const a = GG.input.snapshot(0), b = GG.input.snapshot(1);
-      return {
-        left: a.left || b.left, right: a.right || b.right, up: a.up || b.up,
-        down: a.down || b.down,
-        jumpPressed: a.jumpPressed || b.jumpPressed, action: a.action || b.action,
-      };
+    /** Online: this machine's hero, driven ONLY by that hero's own keys
+     *  (host = Player 1 = WASD set, client = Player 2 = arrow set). */
+    _buildLocalInput() {
+      return GG.input.snapshotOnline(this.role === "client" ? 1 : 0);
     }
 
     /** Merge a snapshot with any still-unconsumed press edges for slot i. */
@@ -310,7 +479,14 @@
         lvl.players[1].input = this._bufEdges(1, Object.assign({}, this._remoteInput));
       } else { // client
         const mine = this._buildLocalInput();
-        GG.net.sendInput(mine);           // send our input upstream
+        // Press-edges travel as running counters: the fast lane is unreliable,
+        // and a dropped packet must never swallow a jump or a shot.
+        const n = this._edgeN || (this._edgeN = { j: 0, s: 0, a: 0, p: 0 });
+        if (mine.jumpPressed) n.j++;
+        if (mine.specialPressed) n.s++;
+        if (mine.attackPressed) n.a++;
+        if (mine.pingPressed) n.p++;
+        GG.net.sendInput(Object.assign({}, mine, { nj: n.j, ns: n.s, na: n.a, np: n.p }));
         lvl.players[1].input = mine;       // local echo (overwritten by snapshots)
       }
 
@@ -353,6 +529,15 @@
         }
       }
 
+      // Open world: discovery, autosave, and the 100% ending.
+      if (this.worldMode && lvl === this.level && !(this.mode === "online" && this.role === "client")) {
+        const fresh = GG.world.tick(lvl, dt);
+        if (fresh) {
+          this._broadcastRoom({ update: true });
+          GG.bus.emit("map:discovered", { pct: GG.world.percent });
+          if (GG.world.complete) this._worldEnding();
+        }
+      }
       // Win transition (works for host and client via level.won).
       if (lvl.won && !this._wasWon) {
         this._wasWon = true;
@@ -424,7 +609,47 @@
         this._renderView(ctx, lvl, this.cam, dt, { x: 0, y: 0, w: C.VIEW_W, h: C.VIEW_H });
       }
 
+      if (this.worldMode && this.level) this._renderWorldOverlay(ctx, dt);
       this._renderTransition(ctx, dt);
+    }
+
+    /** Open-world overlays: minimap, region banner, doorway fades, full map. */
+    _renderWorldOverlay(ctx, dt) {
+      this._owT = (this._owT || 0) + dt;
+      const t = this._owT, W = C.VIEW_W, H = C.VIEW_H;
+      if (!this.mapOpen) GG.worldmap.drawMini(ctx, this.level, t);
+      // region / room banner
+      const b = this._banner;
+      if (b) {
+        b.t += dt;
+        const life = b.small ? 2.2 : 3.4;
+        const a = b.t < 0.5 ? b.t / 0.5 : b.t > life - 0.8 ? Math.max(0, (life - b.t) / 0.8) : 1;
+        if (b.t > life) this._banner = null;
+        else {
+          ctx.save(); ctx.globalAlpha = a; ctx.textAlign = "center";
+          const y = b.small ? 118 : 150;
+          if (!b.small) {
+            const g = ctx.createLinearGradient(W / 2 - 260, 0, W / 2 + 260, 0);
+            g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(0.5, "rgba(5,4,12,0.6)"); g.addColorStop(1, "rgba(0,0,0,0)");
+            ctx.fillStyle = g; ctx.fillRect(W / 2 - 260, y - 34, 520, 58);
+          }
+          ctx.fillStyle = "#f2c14e"; ctx.font = `700 ${b.small ? 15 : 26}px 'Cinzel', Georgia, serif`;
+          ctx.shadowBlur = 12; ctx.shadowColor = "rgba(242,193,78,0.6)";
+          ctx.fillText(b.title, W / 2, y);
+          ctx.shadowBlur = 0;
+          if (b.sub) { ctx.fillStyle = "#e8dcc0"; ctx.font = "italic 13px Georgia, serif"; ctx.fillText(b.sub, W / 2, y + 20); }
+          ctx.restore();
+        }
+      }
+      // doorway fade (out when leaving, in when arriving)
+      const tf = this._travelFade;
+      if (tf) {
+        let a = 0;
+        if (tf.phase === "out") a = Math.min(1, tf.t / 0.24);
+        else { tf.t += dt; a = Math.max(0, 1 - tf.t / 0.35); if (a <= 0) this._travelFade = null; }
+        ctx.fillStyle = `rgba(4,4,10,${a})`; ctx.fillRect(0, 0, W, H);
+      }
+      if (this.mapOpen) GG.worldmap.drawFull(ctx, this.level, t);
     }
 
     /** Split-screen kicks in (local only) when players separate a lot. */

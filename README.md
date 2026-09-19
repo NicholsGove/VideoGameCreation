@@ -1,10 +1,10 @@
-# Echoes of Aether — a co-op puzzle platformer
+# Echoes of Aether — a co-op open-world adventure
 
-An original two-player cooperative puzzle-platformer. The world was powered by
-the **Heart Engine** until it shattered into **Aether Shards**. Two explorers —
-**Kiro** and **Lyra** — each hold half of the Aether Compass and must work
-together to restore it. Neither hero is stronger than the other; their strength
-is cooperation.
+An original two-player cooperative 2D adventure. The world was powered by the
+**Heart Engine** until it shattered into **Aether Shards**. Two explorers —
+**Nichols** and **Nibihah** — each hold half of the Aether Compass and must
+explore one huge connected world together to restore it. Neither hero is
+stronger than the other; their strength is cooperation.
 
 All characters, levels, art and audio are original and built from scratch —
 **no external assets** (graphics are drawn on a canvas, audio is synthesised at
@@ -15,6 +15,60 @@ runtime with the Web Audio API).
 **Double-click `index.html`** — it runs in any modern browser at native
 **1920×1080**, no build step, no server, no install. Local 2-player works fully
 offline. (Online co-op loads a small networking library from a CDN.)
+
+## The Journey — one open world
+
+The main game is no longer a list of levels. It is **one connected 2D world**
+(Ori-style) of **107 rooms / 218 screens across 8 regions**, built to take
+roughly **four hours** for two players to explore completely.
+
+- **Explore together.** Rooms join through doorways. A doorway only carries the
+  party on when **both heroes stand in it** — alone it shows *"Waiting for your
+  partner…"*. Nobody gets left behind.
+- **Discovery %.** Every screen lights up on the map the first time a hero sets
+  foot in it. Press **M** (or **Tab**) for the full map, with the percentage,
+  the powers you own and the regions you've found; a minimap sits in the corner.
+  **Reach 100% and the ending plays** — the Heart wakes, then the final screen.
+- **Discover powers.** Each region ends in a **Shrine**. Both heroes stand at it
+  to claim a power. Gates elsewhere in the world show the glyph of the power
+  they need, so you return later to open them (and every region hides bonus
+  vaults sealed by powers you only get further on).
+
+| Region | Biome | Shrine grants | Who |
+|---|---|---|---|
+| Whispering Caves | cave | ➶ **Aether Arms** — bolt gun & bow | both |
+| Sunken Ruins | ruins | ⇅ **Wall Grip** — wall slide & wall jump | both |
+| Verdant Wilds | forest | ⇈ **Sky Step** — double jump | Nibihah |
+| The Ironworks | factory | ✊ **Strong Arms** — lift, carry & throw crates | Nichols |
+| Frostpeak | ice | ➟ **Wind Dash** — air dash | Nibihah |
+| The Great Temple | temple | ⚓ **Grapple Hook** — yank distant green levers | Nichols |
+| Sky Isles | sky | ◎ **Swing Ring** — swing from glowing rings | Nibihah |
+| Heart of Aether | heart | ✺ **Mind Grip** — move cubes with the mind | Nichols |
+
+**Always solve it together.** Rooms are built from co-op puzzles: climb on each
+other's heads to reach a lever that lowers steps for your partner, hold a plate
+while the other crosses, pull your own coloured lever standing in your own
+element, walk split paths (lightning below for Nichols, poison above for
+Nibihah), step tandem plates and rune songs together, ferry power cells, push
+heavy crates onto cargo plates, boost each other up to high keys…
+
+**Things that try to kill you.** Thornback **beetles** charge when they see you
+(and stagger when they hit a wall); prism **toads** swell and spit a horizontal
+**laser beam**; **bats** swoop from the ceiling; **spore-caps** lob glowing
+spores; **gaze-moths** fire aimed laser bolts; corruption **rats** hunt in
+packs. Plus **timed lasers** that flicker a warning before firing, laser sweeps
+across climbing shafts, blades, crushers, crumbling stones and moving platforms.
+Some chambers **seal shut** until every beast inside is down. Creatures give you
+a moment's grace when you walk in; you respawn at the doorway you entered by.
+
+**Saving** is automatic (every doorway and every few seconds). Gates you open,
+barriers you break and arenas you clear stay that way. **Continue Journey** on
+the title screen resumes; the pause menu has *World Map*, *Back to the Doorway*
+(if you get stuck) and *Reset This Room*.
+
+The world is generated **deterministically** from a fixed seed
+(`src/world/worldgen.js`), so every player explores the same map, and the test
+suite proves every room is solvable (see *Tests*).
 
 ## The heroes
 
@@ -80,7 +134,7 @@ pause. The menu is fully navigable by keyboard (arrows + Enter) or pad.
 
 ## Controls
 
-| | Player 1 · Kiro | Player 2 · Lyra |
+| | Player 1 · Nichols | Player 2 · Nibihah |
 |---|---|---|
 | Move / Jump | `W` `A` `S` `D` (or Pad 1) | `↑` `←` `↓` `→` (or Pad 2) |
 | Flip switch / repair / carry / throw / cells | `S` | `↓` |
@@ -88,6 +142,10 @@ pause. The menu is fully navigable by keyboard (arrows + Enter) or pad.
 | **Attack** (bolt gun · bow) | `E` | `.` |
 | Ping a spot | `F` | `/` |
 | Crawl (Nibihah) · brace · drop through one-way | hold `S` | hold `↓` |
+| World map (either player) | `M` / `Tab` | `M` / `Tab` |
+
+Online, each machine only reads its own hero's column of this table.
+In the Journey, Special and Attack only work once the matching power is found.
 
 **Tutorials** — every level that introduces a mechanic now carries a floating
 parchment sign teaching it in-world, with key glyphs (how to swing, telekinesis,
@@ -224,15 +282,25 @@ the level-select screen.
 
 ## Modes
 
-- **Local multiplayer** — two players, one keyboard.
-- **Online multiplayer** — one player **Hosts** (5-letter lobby code), the other
-  **Joins**. The host runs the authoritative simulation and the client only sends
-  inputs, which prevents position/puzzle cheating.
+- **The Journey (open world)** — local co-op on one keyboard (or two pads).
+- **Online Co-op** — one player **Hosts** (5-letter lobby code), the other
+  **Joins**. Hosting continues the host's saved journey (or the classic levels).
+  **Player 1 (host) controls Nichols with WASD + Q/E/F only; Player 2 (client)
+  controls Nibihah with the arrow keys + Right-Shift / . / slash only** — each
+  machine ignores the other hero's keys, so neither player can drive the other's
+  hero. The host runs the authoritative simulation; the client sends inputs
+  (press counters, so a dropped packet never eats a jump) and mirrors the map,
+  powers and room state.
+- **Classic Levels** — the original 70-level campaign + Prototype Vault.
 
 ## Project structure
 
 ```
 index.html            Loads scripts in dependency order (no build step)
+src/world/worldgen.js The open world: regions, rooms, doorways, chunks, gates (deterministic)
+src/world/world.js    Journey runtime: travel, powers, discovery %, room memory, saving
+src/world/creatures.js Creatures, doorways, shrines, light bridges, thorn barriers, arenas
+src/ui/worldmap.js    Full map + minimap
 styles.css            Retro UI theme
 src/
   core/  utils, events (bus), statemachine, input (rebinding), storage (save),
@@ -263,11 +331,18 @@ serialisable levels for netcode.
 
 ## Tests
 
-Run the verification harness with:
+```
+node tests/world.js    # open world: every room solvable from every doorway,
+                       # power gates sealed without their power and open with it,
+                       # no soft-locks, 100% reachable, idle-safety, render smoke
+node tests/powers.js   # real-physics bots perform every power trial
+                       # (throw, mind-grip, chimney climb, grapple, dash, swing, boost)
+node tests/online.js   # P1 = WASD only / P2 = arrows only, dropped-packet presses,
+                       # host/client world sync
+node tests/verify.js   # the classic 70-level campaign
+```
 
-```
-node tests/verify.js
-```
+The classic harness:
 
 It stubs the DOM, loads the real game files and checks character identity,
 colour-lock ownership, spawn safety, the portal rule, and **staged solvability

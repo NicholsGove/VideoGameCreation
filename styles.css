@@ -330,3 +330,22 @@ select { min-width: 150px; }
 #transition.show .runes { opacity: .8; animation: spark 1s infinite; }
 
 .hidden { display: none !important; }
+
+/* ---- Open world: new-power card ---------------------------------------- */
+.power-card {
+  position: absolute; left: 50%; top: 18%; transform: translateX(-50%);
+  width: min(460px, 80%); padding: 18px 24px 16px; text-align: center; pointer-events: none;
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(43,35,64,.96), rgba(22,17,38,.96));
+  border: 3px solid var(--gold-2); border-radius: 18px;
+  box-shadow: 0 0 40px rgba(242,193,78,.35), 0 18px 40px rgba(0,0,0,.6);
+  animation: tabletIn .5s cubic-bezier(.2,1.4,.4,1) both;
+}
+.power-card.out { transition: opacity .6s, transform .6s; opacity: 0; transform: translateX(-50%) translateY(-20px); }
+.power-card .pc-glyph { font-size: 46px; line-height: 1; margin-bottom: 4px; animation: pcSpin 2.4s ease-in-out infinite; }
+.power-card .pc-new { font-family: var(--font-head); font-size: 9px; letter-spacing: 2px; color: var(--gold-line); opacity: .85; }
+.power-card .pc-name { font-family: var(--font-head); font-size: 18px; color: #fff; margin: 6px 0 8px; text-shadow: 0 0 14px rgba(255,231,154,.6); }
+.power-card .pc-lines { font-size: 14px; line-height: 1.5; }
+.power-card .pc-keys { margin-top: 8px; font-size: 12px; }
+.power-card .pc-hint { margin-top: 8px; font-size: 11px; opacity: .7; font-style: italic; }
+@keyframes pcSpin { 0%,100% { transform: scale(1) rotate(0); } 50% { transform: scale(1.12) rotate(8deg); } }

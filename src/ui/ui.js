@@ -73,21 +73,22 @@
     // ---- Main menu -------------------------------------------------------
     showMainMenu() {
       this.hideHUD();
-      const cont = GG.save.data.unlockedLevel;
-      const hasSave = cont > 1;
-      const btn = (a, cls, ico, title, sub) =>
-        `<button class="btn ${cls} nav" data-a="${a}"><span class="ico">${ico}</span><span class="label">${title}${sub ? `<span class="sub">${sub}</span>` : ""}</span></button>`;
+      const hasJourney = GG.world.hasSave();
+      const sum = hasJourney ? GG.world.savedSummary() : null;
+      const btn = (a, cls, ico, title, sub, dis) =>
+        `<button class="btn ${cls} nav" data-a="${a}" ${dis ? "disabled" : ""}><span class="ico">${ico}</span><span class="label">${title}${sub ? `<span class="sub">${sub}</span>` : ""}</span></button>`;
       const sbtn = (a, cls, ico, title) =>
         `<button class="btn small ${cls} nav" data-a="${a}"><span class="ico">${ico}</span>${title}</button>`;
       const node = el(`
         <div class="menu menu-right">
-          <p class="tagline" style="margin-top:2px;">Restore the Heart Engine — together.<br><span class="badge p1">Nichols</span> &amp; <span class="badge p2">Nibihah</span></p>
-          ${btn("story", "primary", "▶", "Story Mode", "Play the adventure from the beginning")}
-          <button class="btn nav" data-a="continue" ${hasSave ? "" : "disabled"}><span class="ico">⏳</span><span class="label">Continue<span class="sub">${hasSave ? "Resume at Aether Shard " + Math.min(cont, GG.LEVEL_COUNT) : "No save yet"}</span></span></button>
-          ${btn("local", "", "👥", "Local Co-op", "WASD + arrows · or two gamepads")}
-          ${btn("online", "", "🌐", "Online Co-op", "Host or join with a lobby code")}
+          <p class="tagline" style="margin-top:2px;">One world. Two heroes. Discover it all — together.<br><span class="badge p1">Nichols</span> &amp; <span class="badge p2">Nibihah</span></p>
+          ${hasJourney
+            ? btn("continue", "primary", "⏳", "Continue Journey", `${sum ? sum.pct.toFixed(1) + "% discovered · " + sum.region + " · " + U.formatTime(sum.timeMs).split(".")[0] : "Resume where you left off"}`)
+            : ""}
+          ${btn("journey", hasJourney ? "" : "primary", "🗺", hasJourney ? "New Journey" : "Begin the Journey", "Explore the open world · local co-op")}
+          ${btn("online", "", "🌐", "Online Co-op", "Host or join · P1 = WASD, P2 = arrows")}
+          ${btn("classic", "", "📜", "Classic Levels", "The original 70 puzzle levels")}
           <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap;">
-            ${sbtn("levels", "", "🗺", "Levels")}
             ${sbtn("achv", "", "🏆", "Achievements")}
             ${sbtn("settings", "", "⚙", "Settings")}
             ${sbtn("credits", "", "📜", "Credits")}
@@ -95,11 +96,14 @@
             ${sbtn("quit", "danger", "🚪", "Quit")}
           </div>
         </div>`);
-      click(node, '[data-a="story"]', () => this.showStory());
-      click(node, '[data-a="continue"]', () => { if (hasSave) { this.savingIndicator("Save loaded"); this.transition(() => GG.game.startLocal(Math.min(GG.save.data.unlockedLevel, GG.LEVEL_COUNT))); } });
-      click(node, '[data-a="local"]', () => this.showLevelSelect("local"));
+      click(node, '[data-a="continue"]', () => { this.savingIndicator("Journey loaded"); this.transition(() => GG.game.startWorld(false)); });
+      click(node, '[data-a="journey"]', () => {
+        if (hasJourney) this.showConfirm("Start a new journey?", "Your current map and powers will be lost.", () =>
+          this.transition(() => GG.game.playCutscene("prologue", () => GG.game.startWorld(true))), () => this.showMainMenu());
+        else this.transition(() => GG.game.playCutscene("prologue", () => GG.game.startWorld(true)));
+      });
+      click(node, '[data-a="classic"]', () => this.showClassic());
       click(node, '[data-a="online"]', () => this.showOnline());
-      click(node, '[data-a="levels"]', () => this.showLevelSelect("local"));
       click(node, '[data-a="achv"]', () => this.showAchievements());
       click(node, '[data-a="settings"]', () => this.showSettings("main"));
       click(node, '[data-a="credits"]', () => this.showCredits());
@@ -107,6 +111,82 @@
       click(node, '[data-a="quit"]', () => this.showQuit());
       this._set(node);
       this._bindNav(node);
+    },
+
+    /** The original chapter campaign, kept as its own mode. */
+    showClassic() {
+      const cont = GG.save.data.unlockedLevel;
+      const hasSave = cont > 1;
+      const node = el(`
+        <div class="menu">
+          <h2>📜 Classic Levels</h2>
+          <p class="tagline">The original campaign: 70 hand-built puzzle levels across six chapters, plus the Prototype Vault.</p>
+          <button class="btn primary nav" data-a="story"><span class="ico">▶</span><span class="label">Story Mode<span class="sub">From level 1, with cutscenes</span></span></button>
+          <button class="btn nav" data-a="continue" ${hasSave ? "" : "disabled"}><span class="ico">⏳</span><span class="label">Continue<span class="sub">${hasSave ? "Resume at Aether Shard " + Math.min(cont, GG.LEVEL_COUNT) : "No save yet"}</span></span></button>
+          <button class="btn nav" data-a="levels"><span class="ico">🗺</span><span class="label">Level Select</span></button>
+          <div class="back-row"><button class="btn nav" data-a="back">Back</button></div>
+        </div>`);
+      click(node, '[data-a="story"]', () => this.showStory());
+      click(node, '[data-a="continue"]', () => { if (hasSave) this.transition(() => GG.game.startLocal(Math.min(GG.save.data.unlockedLevel, GG.LEVEL_COUNT))); });
+      click(node, '[data-a="levels"]', () => this.showLevelSelect("local"));
+      click(node, '[data-a="back"]', () => this.showMainMenu());
+      this._set(node); this._bindNav(node);
+    },
+
+    showConfirm(title, text, yes, no) {
+      const node = el(`
+        <div class="menu">
+          <h2>${title}</h2>
+          <p class="tagline">${text}</p>
+          <div class="row" style="gap:8px;margin-top:10px;">
+            <button class="btn danger nav" data-a="yes">Yes</button>
+            <button class="btn nav" data-a="no">Cancel</button>
+          </div>
+        </div>`);
+      click(node, '[data-a="yes"]', () => yes && yes());
+      click(node, '[data-a="no"]', () => no && no());
+      this._set(node); this._bindNav(node);
+    },
+
+    /** A new power flows into the heroes. */
+    showPowerGained(power) {
+      const P = GG.WORLDGEN.POWERS[power]; if (!P) return;
+      if (this._powerNode) this._powerNode.remove();
+      const keys = (P.keys || []).map(([k, who]) => `<span class="kbd">${k}</span> ${who}`).join(" &nbsp; ");
+      const n = el(`
+        <div class="power-card">
+          <div class="pc-glyph" style="color:${P.tint};text-shadow:0 0 24px ${P.tint}">${P.glyph}</div>
+          <div class="pc-new">NEW POWER · ${P.who}</div>
+          <div class="pc-name">${P.name}</div>
+          <div class="pc-lines">${P.lines.join("<br>")}</div>
+          <div class="pc-keys">${keys}</div>
+          <div class="pc-hint">Sealed gates marked ${P.glyph} on the map now open.</div>
+        </div>`);
+      this.hudLayer.appendChild(n);
+      this._powerNode = n;
+      setTimeout(() => { n.classList.add("out"); setTimeout(() => n.remove(), 600); }, 7000);
+    },
+
+    /** The journey is complete — the final screen after the ending cinematic. */
+    showWorldEnd(st) {
+      this.hideHUD();
+      GG.game.state = "menu"; GG.game.level = null;
+      const node = el(`
+        <div class="menu">
+          <h1>The Heart Beats Again</h1>
+          <p class="tagline">Every corner of the world discovered — 100%.<br>Nichols and Nibihah restored the Heart of Aether together.</p>
+          <div class="field"><label>Journey time</label><span>${U.formatTime(st.timeMs || 0).split(".")[0]}</span></div>
+          <div class="field"><label>Powers found</label><span>${st.powers || 8} / 8</span></div>
+          <div class="field"><label>Creatures bested</label><span>${st.slain || 0}</span></div>
+          <div class="field"><label>Gems gathered</label><span>${st.gems || 0} 💎</span></div>
+          <div class="field"><label>Falls</label><span>${st.deaths || 0}</span></div>
+          <p class="center" style="margin-top:12px;"><span class="badge ok">✦ THE END ✦ — thank you for playing</span></p>
+          <div class="row" style="gap:8px;margin-top:12px;justify-content:center;">
+            <button class="btn primary nav" data-a="menu">Return to title</button>
+          </div>
+        </div>`);
+      click(node, '[data-a="menu"]', () => this.transition(() => GG.game.toMenu()));
+      this._set(node); this._bindNav(node);
     },
 
     /** Keyboard/gamepad navigation + hover sound for a menu panel. */
@@ -157,7 +237,7 @@
             <b>Nichols</b> (green) — immune to <span class="badge p1">electricity</span>, pushes heavy objects, repairs machines, activates GREEN mechanisms.<br>
             <b>Nibihah</b> (blue) — immune to <span class="badge p2">poison</span>, double-jumps, fits through narrow passages, activates BLUE mechanisms.<br><br>
             <b>Cooperative physics:</b> stand on each other's heads, jump off a partner to reach higher ledges, and push one another. Wall-slide down tall walls; drop through one-way platforms by holding <span class="kbd">↓</span>.<br><br>
-            Neither hero can finish alone — <b>both</b> must stand on their matching exit pads at once. <b>Gamepads</b> are auto-detected.
+            <b>The Journey</b> is one connected world. Doorways only open when <b>both</b> heroes stand in them. Shrines grant new powers (double jump, dash, grapple…) that open sealed gates — go back and explore. Discover <b>100%</b> of the map (<span class="kbd">M</span>) to finish. <b>Gamepads</b> are auto-detected.
           </p>
           <div class="divider"></div>
           <div class="row between"><span>Player 1 (Nichols)</span><span><span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> / Pad 1</span></div>
@@ -165,6 +245,7 @@
           <div class="row between"><span>Special (grapple/tele · swing/dash)</span><span><span class="kbd">Q</span> · <span class="kbd">R-Shift</span></span></div>
           <div class="row between"><span>Attack (bolt gun · bow)</span><span><span class="kbd">E</span> · <span class="kbd">.</span></span></div>
           <div class="row between"><span>Ping a spot</span><span><span class="kbd">F</span> · <span class="kbd">/</span></span></div>
+          <div class="row between"><span>World map</span><span><span class="kbd">M</span> / <span class="kbd">Tab</span></span></div>
           <div class="row between"><span>Pause · Restart</span><span><span class="kbd">Esc</span>/Start <span class="kbd">R</span></span></div>
           <div class="back-row"><button class="btn" data-a="back">Back</button></div>
         </div>`);
@@ -234,13 +315,16 @@
         <div class="menu">
           <h2>Online Multiplayer</h2>
           ${avail ? "" : `<p class="tagline" style="color:var(--danger)">Online needs an internet connection — the networking library couldn't load. Local play still works.</p>`}
-          <button class="btn primary" data-a="host" ${avail ? "" : "disabled"}>Host a Game <span class="sub">Create a lobby code and share it with a friend</span></button>
+          <p class="tagline" style="margin:0 0 8px;">Host plays <span class="badge p1">Player 1 · WASD</span> — the friend who joins plays <span class="badge p2">Player 2 · arrow keys</span>. Each controls only their own hero.</p>
+          <button class="btn primary" data-a="host" ${avail ? "" : "disabled"}>Host the Journey <span class="sub">Open world · continues your saved journey</span></button>
+          <button class="btn" data-a="hostc" ${avail ? "" : "disabled"}>Host Classic Levels <span class="sub">The original 70 levels</span></button>
           <div class="divider"></div>
           <div class="field"><label>Join with code</label><input type="text" maxlength="5" id="joinCode" placeholder="ABC12"></div>
           <button class="btn" data-a="join" ${avail ? "" : "disabled"}>Join Game</button>
           <div class="back-row"><button class="btn" data-a="back">Back</button></div>
         </div>`);
-      click(node, '[data-a="host"]', () => this._doHost());
+      click(node, '[data-a="host"]', () => { this._hostClassic = false; this._doHost(); });
+      click(node, '[data-a="hostc"]', () => { this._hostClassic = true; this._doHost(); });
       click(node, '[data-a="join"]', () => {
         const code = node.querySelector("#joinCode").value.trim().toUpperCase();
         if (code.length < 4) { this.toast("Enter a code", "Ask the host for their 5-letter code"); return; }
@@ -268,8 +352,9 @@
       }).catch((err) => { const m = node.querySelector("#netmsg"); if (m) { m.className = "badge err"; m.textContent = String(err.message || err); } });
       // When the client connects, host boots into the chosen level.
       GG.bus.once("net:connected", () => {
-        this.toast("Player joined!", "Starting game");
-        GG.game.startOnline("host", 1);
+        this.toast("Player joined!", this._hostClassic ? "Starting the classic levels" : "Starting the journey");
+        if (this._hostClassic) GG.game.startOnline("host", 1);
+        else GG.game.startWorldOnline("host");
       });
     },
 
@@ -513,6 +598,7 @@
 
     // ---- Pause -----------------------------------------------------------
     showPause() {
+      if (GG.game.worldMode) return this._showWorldPause();
       const node = el(`
         <div class="menu pause-tablet">
           <h2>⏸ Paused</h2>
@@ -529,6 +615,30 @@
       click(node, '[data-a="settings"]', () => this.showSettings("pause"));
       click(node, '[data-a="title"]', () => this.transition(() => GG.game.toMenu()));
       click(node, '[data-a="exit"]', () => this.showQuit());
+      this._set(node); this._bindNav(node);
+    },
+
+    _showWorldPause() {
+      const pct = GG.world.percent.toFixed(1);
+      const client = GG.game.mode === "online" && GG.game.role === "client";
+      const node = el(`
+        <div class="menu pause-tablet">
+          <h2>⏸ Paused <span class="badge">${pct}% discovered</span></h2>
+          <button class="btn primary nav" data-a="resume"><span class="ico">▶</span><span class="label">Resume</span></button>
+          <button class="btn nav" data-a="map"><span class="ico">🗺</span><span class="label">World Map<span class="sub"><span class="kbd">M</span></span></span></button>
+          ${client ? "" : `<button class="btn nav" data-a="door"><span class="ico">↺</span><span class="label">Back to the Doorway<span class="sub"><span class="kbd">R</span> · if you get stuck</span></span></button>
+          <button class="btn nav" data-a="reset"><span class="ico">⟲</span><span class="label">Reset This Room<span class="sub">puzzles here start over</span></span></button>`}
+          <button class="btn nav" data-a="controls"><span class="ico">⌨</span><span class="label">Controls</span></button>
+          <button class="btn nav" data-a="settings"><span class="ico">⚙</span><span class="label">Settings</span></button>
+          <button class="btn nav" data-a="title"><span class="ico">🏛</span><span class="label">Save &amp; Return to Title</span></button>
+        </div>`);
+      click(node, '[data-a="resume"]', () => GG.game.resume());
+      click(node, '[data-a="map"]', () => { GG.game.resume(); GG.game.toggleMap(true); });
+      click(node, '[data-a="door"]', () => GG.game.restartLevel(false));
+      click(node, '[data-a="reset"]', () => GG.game.restartLevel(true));
+      click(node, '[data-a="controls"]', () => this.showControls("pause"));
+      click(node, '[data-a="settings"]', () => this.showSettings("pause"));
+      click(node, '[data-a="title"]', () => { this.savingIndicator("Journey saved"); this.transition(() => GG.game.toMenu()); });
       this._set(node); this._bindNav(node);
     },
 
@@ -612,22 +722,37 @@
       }));
     },
     showHUD() { if (this._hud) this._hud.style.display = "block"; },
-    hideHUD() { if (this._hud) this._hud.style.display = "none"; },
+    hideHUD() { if (this._hud) this._hud.style.display = "none"; if (this._powerNode) { this._powerNode.remove(); this._powerNode = null; } },
 
     /** Called every frame: refresh objective, stats, and live hero portraits. */
     tick(game) {
       if (!this._hud || this._hud.style.display === "none") return;
       const lvl = game.level; if (!lvl) return;
       const q = (sel) => this._hud.querySelector(sel);
+      q(".hud-center").style.visibility = game.mapOpen ? "hidden" : "";
       const showTimer = GG.save.settings.gameplay.timer !== false;
+      if (game.worldMode && GG.world.state) {
+        const st = GG.world.state, WG = GG.WORLDGEN;
+        const pw = WG.POWER_ORDER.map(p => GG.world.hasPower(p)
+          ? `<span title="${WG.POWERS[p].name}" style="color:${WG.POWERS[p].tint}">${WG.POWERS[p].glyph}</span>` : `<span style="opacity:.25">·</span>`).join(" ");
+        const key = lvl.data.biome + "|" + GG.world.percent + "|" + st.powers.length;
+        if (this._hudKey !== key) {
+          this._hudKey = key;
+          q(".hud-obj").innerHTML = `🗺 ${lvl.data.biome} · <b>${GG.world.percent.toFixed(1)}%</b> discovered`;
+        }
+        q(".hud-stats").innerHTML = `${pw} · 💎 <b>${st.gems || 0}</b> · <span class="timer">${U.formatTime(lvl.timeMs).split(".")[0]}</span>`;
+      } else {
       q(".hud-obj").innerHTML = `🎯 ${lvl.data.hint || "Reach the exits together"}`;
       q(".hud-stats").innerHTML =
         `💎 <b>${lvl.gemsCollected}/${lvl.totalGems}</b>` +
         (Object.keys(lvl.keys || {}).length ? ` · 🗝 ${Object.values(lvl.keys).reduce((a, b) => a + b, 0)}` : "") +
         ` · <span class="timer">${U.formatTime(lvl.timeMs)}</span>` +
         `${lvl.won ? ' · <span class="badge ok">✔ Escaped!</span>' : ''}`;
+      }
       // shared ability energy bar (pulses red when nearly drained)
       const fill = q(".hud-energy-fill");
+      const bar = q(".hud-energy");
+      if (bar) bar.style.display = (game.worldMode && !(GG.world.hasPower("swing") || GG.world.hasPower("tele"))) ? "none" : "";
       if (fill) {
         const f = lvl.energy / lvl.energyMax;
         fill.style.width = (f * 100).toFixed(0) + "%";
@@ -680,7 +805,7 @@
 
   // Achievement unlock -> toast.
   GG.bus.on("achievement:unlocked", (d) => ui.toast("🏆 " + d.name, d.desc));
-  GG.bus.on("level:loaded", (d) => { if (d.hint) ui.toast("Level " + d.id, d.name); });
+  GG.bus.on("level:loaded", (d) => { if (d.hint && !GG.game.worldMode) ui.toast("Level " + d.id, d.name); });
 
   GG.ui = ui;
 })(window);

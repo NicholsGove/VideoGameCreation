@@ -210,6 +210,14 @@
       b.on("ui:confirm", () => this.sfx("uiconfirm"));
       b.on("ui:error", () => this.sfx("uierror"));
       b.on("achievement:unlocked", () => this.sfx("achieve"));
+      b.on("creature:slain", () => this.sfx("crate"));
+      b.on("creature:charge", () => this._tone("sfx", 110, 0.25, "sawtooth", 0.16, 70));
+      b.on("creature:screech", () => this._tone("sfx", 1400, 0.12, "square", 0.05, 900));
+      b.on("creature:spit", () => this._tone("sfx", 300, 0.08, "sine", 0.12, 520));
+      b.on("arena:start", () => this.sfx("door"));
+      b.on("arena:clear", () => this.sfx("unlock"));
+      b.on("bridge:built", () => this._tone("sfx", 520, 0.12, "triangle", 0.14, 880));
+      b.on("map:discovered", () => this._tone("sfx", 1240, 0.08, "sine", 0.07, 1660));
       // Nova mrrps, Pip croaks — both mean "there's something hidden here".
       b.on("pet:alert", (e) => this.sfx(e && e.kind === "frog" ? "croak" : "mrrp"));
     }
