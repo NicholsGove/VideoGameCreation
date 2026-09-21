@@ -27,7 +27,7 @@ const H = require("./harness.js");
 H.load([
   "core/utils.js", "core/events.js", "core/statemachine.js", "core/input.js", "core/storage.js", "core/camera.js", "core/particles.js",
   "core/weather.js", "entities/sprites.js", "world/objects.js", "world/creatures.js", "world/tilemap.js", "world/levels.js",
-  "world/worldgen.js", "world/level.js", "entities/player.js", "world/world.js",
+  "world/worldgen.js", "world/level.js", "world/decor.js", "world/guardians.js", "entities/player.js", "world/world.js",
 ]);
 const GG = global.GG, T = GG.C.TILE, O = GG.obj, WG = GG.WORLDGEN;
 const VERBOSE = process.argv.includes("-v");
@@ -256,6 +256,10 @@ function solve(lvl, startTiles, powers) {
       } else if (o instanceof O.Receptacle) {
         const bat = objs.find(b => b instanceof O.Battery && [0, 1].some(h => near(heroSets[h], b.x, b.y, b.w, b.h, 1, 1) && near(heroSets[h], o.x, o.y, o.w, o.h, 1)));
         if (bat) openCh(o.channel);
+      } else if (O.LightReceiver && o instanceof O.LightReceiver) {
+        // a sunbeam puzzle: whoever can stand at its turning mirror can aim it
+        const m = lvl.byId(o.via);
+        if (m && [0, 1].some(h => near(heroSets[h], m.x, m.y, m.w, m.h, 1, 1))) openCh(o.channel);
       } else if (o instanceof O.Barrier) {
         if (!has("arms") || open.has("BAR:" + o.id)) continue;
         const bc = Math.floor(o.cx / T), r0 = Math.floor(o.y / T), r1 = Math.floor((o.y + o.h - 1) / T);
@@ -354,6 +358,14 @@ for (const room of W.rooms) {
       const r = [0, -1, 1, -2, 2].some(dc => both([t[0] + dc, t[1]]));
       ok(r, `room ${room.id} shrine reachable by both heroes`);
       if (!r) roomOk = false;
+    }
+    // hidden upgrades, storytellers and merchants can all be reached
+    for (const o of lvl.objects) if ((O.Upgrade && o instanceof O.Upgrade) || (O.NPC && o instanceof O.NPC)) {
+      const c0 = Math.floor(o.cx / T), r0 = Math.floor(o.cy / T);
+      let got = false;
+      // standing within a jump (3 tiles) below it, give or take a column
+      for (let dr = -1; dr <= 3 && !got; dr++) for (let dc = -1; dc <= 1 && !got; dc++) { const k = (r0 + dr) * C + c0 + dc; if (res.A.seen.has(k) || res.B.seen.has(k)) got = true; }
+      ok(got, `room ${room.id} (${def.name}) ${o.constructor.name} at ${c0},${r0} can be reached (entry ${e})`);
     }
   }
   roomsChecked++;

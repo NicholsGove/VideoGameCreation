@@ -23,6 +23,9 @@
 
     setBounds(w, h) { this.bounds = { x: 0, y: 0, w, h }; }
 
+    /** A downward camera dip (hard landings) that springs back. */
+    kick(px) { this._kickV = (this._kickV || 0) + px * 12; }
+
     /** Add screen shake. amount in 0..1 (clamped). */
     shake(amount) {
       if (!this.enabledShake) return;
@@ -70,6 +73,10 @@
         this.y = U.damp(this.y, ty, 9, dt);
       }
 
+      // Landing dip: a damped spring on a small vertical offset.
+      this._kick = this._kick || 0; this._kickV = this._kickV || 0;
+      this._kickV += (-this._kick * 180 - this._kickV * 16) * dt;
+      this._kick += this._kickV * dt;
       // Resolve shake (quadratic falloff feels punchier).
       if (this.trauma > 0) {
         const s = this.trauma * this.trauma;
@@ -82,7 +89,7 @@
     /** Apply the camera transform to a 2D context. Call ctx.save() first. */
     apply(ctx) {
       ctx.scale(this.zoom, this.zoom);
-      ctx.translate(-(this.x + this._shakeX), -(this.y + this._shakeY));
+      ctx.translate(-(this.x + this._shakeX), -(this.y + this._shakeY - (this._kick || 0)));
     }
 
     /** Convert a screen point to world space (for future mouse interactions). */

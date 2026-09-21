@@ -22,14 +22,16 @@
     achievements: {},        // id -> unlockedTimestamp
     totalDeaths: 0,
     totalGems: 0,
+    lastSlot: 1,             // which journey slot "Continue" resumes
+    bestJourney: {},         // "ng0" -> best 100% time in ms
     settings: {
       audio: { master: 0.9, music: 0.6, sfx: 0.9, voice: 0.8 },
       graphics: {
         displayMode: "borderless", // "borderless" | "fullscreen" | "windowed"
         fullscreen: false, vsync: true, lighting: true, shake: true,
-        particles: true, bloom: true, weather: true, splitscreen: true,
+        particles: true, bloom: true, weather: true, splitscreen: true, flash: true,
       },
-      gameplay: { language: "en", colorblind: false, holdToRestart: false },
+      gameplay: { language: "en", colorblind: false, holdToRestart: false, assist: false, speedrun: false, rumble: true, tutorials: "smart" },
       bindings: null,        // null => use defaults
     },
   };

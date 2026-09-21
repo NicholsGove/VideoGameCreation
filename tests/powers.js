@@ -14,7 +14,7 @@ const H = require("./harness.js");
 H.load([
   "core/utils.js", "core/events.js", "core/statemachine.js", "core/input.js", "core/storage.js", "core/camera.js", "core/particles.js",
   "core/weather.js", "entities/sprites.js", "world/objects.js", "world/creatures.js", "world/tilemap.js", "world/levels.js",
-  "world/worldgen.js", "world/level.js", "entities/player.js", "world/world.js",
+  "world/worldgen.js", "world/level.js", "world/decor.js", "world/guardians.js", "entities/player.js", "world/world.js",
 ]);
 const GG = global.GG, T = GG.C.TILE, WG = GG.WORLDGEN, O = GG.obj;
 let pass = 0, fail = 0;
@@ -128,6 +128,7 @@ function chimneyTrial(powers, who) {
       if (hold === 0 && p.y + p.h < 12.6 * T) hold = -1;          // inside: lean on a wall
       if (hold < 0) me.left = true; else if (hold > 0) me.right = true;
       if (p._wallSliding && jumpCd === 0) { me.jumpPressed = true; jumpCd = 0.12; hold = -hold; }
+      if (p.onGround && Math.abs(p.y + p.h - 6 * T) < 3) { me.left = me.right = false; me.action = true; }   // landed on the lever's perch
       if (p.y + p.h < 6 * T - 4 && hold < 0) phase = 2;       // above the inner wall, flying toward it
       if (p.onGround && t > 1) { phase = 0; }
     } else if (phase === 2) {
@@ -265,6 +266,228 @@ function swingTrial(content, opts, powers, startCol, dir, islandCols) {
   const lvl2 = mk("boostwall", { tier: 0 }, []);
   const b2 = lvl2.players[1]; place(b2, 12, 16);
   ok(!run(lvl2, 2.5, (t, i) => [{}, { up: true, right: true, jumpPressed: i === 2, action: t > 0.9 }], (l) => chan(l, "w")), "Boost wall: nobody climbs it alone");
+}
+
+/* ---- Movement & environment (aesthetics round) ------------------------ */
+const heroOnFloor = (lvl, p, col) => { place(p, col, 16); for (let i = 0; i < 20; i++) { lvl.players.forEach(q => q.input = I()); lvl.step(DT); } };
+{
+  // TOSS: Nichols heaves Nibihah off his head, higher than she can jump
+  const lvl = mk("simple", { tier: 0, seed: 77 }, []);
+  const [n, b] = lvl.players;
+  place(n, 3, 16); place(b, 3, 16); b.y = n.y - b.h - 1; b.x = n.cx - b.w / 2;
+  for (let i = 0; i < 40; i++) { n.input = I(); b.input = I(); lvl.step(DT); }
+  const ridingStart = b.groundRef === n;
+  let top = b.y, tossed = false;
+  const off = GG.bus.on("player:toss", () => { tossed = true; });
+  run(lvl, 1.2, (t, i) => [{ action: i >= 2 && i < 6 }, {}], () => { top = Math.min(top, b.y); return false; });
+  if (off) off();
+  ok(ridingStart, "Toss: Nibihah rides on Nichols' head");
+  ok(tossed && n.y - (top + b.h) > 2.2 * T, "Toss: Nichols throws her well above his head (" + ((n.y - (top + b.h)) / T).toFixed(2) + " tiles)");
+}
+{
+  // CATCH: Nichols holds ACTION and catches Nibihah falling from high up
+  const lvl = mk("simple", { tier: 0, seed: 77 }, []);
+  const [n, b] = lvl.players;
+  heroOnFloor(lvl, n, 3);
+  b.x = n.cx - b.w / 2; b.y = 3 * T; b.vy = 0;
+  let caught = false;
+  run(lvl, 1.5, () => [{ action: true }, {}], () => { if (b.groundRef === n) caught = true; return caught; });
+  ok(caught, "Catch: a falling partner lands safely on the catcher's head");
+}
+{
+  // SUNBEAMS: light is harmless; turning a mirror lights the crystal and opens the gate
+  const lvl = mk("sunbeam", { tier: 6 }, ALL);
+  const [n, b] = lvl.players;
+  heroOnFloor(lvl, b, 23);
+  run(lvl, 1.2, () => [{}, {}]);
+  ok(!b.dead && !chan(lvl, "sL") && !chan(lvl, "sR"), "Sunbeam: the golden beam is harmless and the crystals start dark");
+  heroOnFloor(lvl, n, 8);
+  const done = run(lvl, 3, (t, i) => [{ action: i === 2 }, {}], (l) => chan(l, "sL"));
+  ok(done, "Sunbeam: turning the left mirror lights the left sun crystal");
+  const gate = lvl.objects.find(o => o instanceof O.Door);
+  run(lvl, 0.2, () => [{}, {}]);
+  ok(gate && gate.open, "Sunbeam: the gate opens");
+  // the other side works on its own too
+  const lvl2 = mk("sunbeam", { tier: 6 }, ALL);
+  heroOnFloor(lvl2, lvl2.players[1], 23);
+  ok(run(lvl2, 3, (t, i) => [{}, { action: i === 2 }], (l) => chan(l, "sR")), "Sunbeam: Nibihah lights the right crystal from her side");
+}
+{
+  // HEARTBEAT stones share the level clock, and there is always a way on
+  const lvl = mk("heartbeat", { tier: 8 }, ALL);
+  const bl = lvl.objects.filter(o => o instanceof O.Blinker);
+  ok(bl.length === 4 && bl.every(o => o.sync), "Heartbeat: four synced stones");
+  let window = true;
+  for (let k = 0; k + 1 < bl.length; k++) {
+    let best = 0, cur = 0;
+    for (let t = 0; t < 5.2; t += 0.01) {
+      const on = (o) => ((((t + o.phase) % o.period) / o.period) < o.duty);
+      cur = on(bl[k]) && on(bl[k + 1]) ? cur + 0.01 : 0; best = Math.max(best, cur);
+    }
+    if (best < 0.35) window = false;
+  }
+  ok(window, "Heartbeat: neighbouring stones overlap long enough to hop across");
+}
+/** Find a twist in a region's open cell by trying seeds. */
+function twistRoom(region, type) {
+  for (let seed = 1; seed < 400; seed++) {
+    const def = WG.testRoom("plain", { region, tier: region, seed: seed * 7919 });
+    const o = def.objects.find(q => q.type === type);
+    if (o) return { seed: seed * 7919, o };
+  }
+  return null;
+}
+{
+  const w = twistRoom(1, "water");
+  ok(!!w, "Ruins: tidal water appears in open cells");
+  if (w) {
+    const lvl = mk("plain", { region: 1, tier: 1, seed: w.seed }, upTo("wallgrip"));
+    const b = lvl.players[1];
+    place(b, Math.floor(w.o.x / T) + 4, 16);
+    let swam = false, top = b.y;
+    run(lvl, 4, (t, i) => [{}, { jumpPressed: i % 40 === 0 }], () => { if (b.swimming) swam = true; top = Math.min(top, b.y); return false; });
+    ok(swam && !b.dead, "Ruins: heroes swim in the water (and don't drown)");
+  }
+}
+{
+  const w = twistRoom(2, "bouncer");
+  ok(!!w, "Wilds: bounce mushrooms appear");
+  if (w) {
+    const lvl = mk("plain", { region: 2, tier: 2, seed: w.seed }, upTo("skystep"));
+    const n = lvl.players[0];
+    n.x = w.o.x + T - n.w / 2; n.y = w.o.y - 2 * T; n.vy = 0;
+    let top = n.y, bounced = false;
+    run(lvl, 2, () => [{}, {}], () => { top = Math.min(top, n.y); if (n.y + n.h < w.o.y - 4 * T) bounced = true; return false; });
+    ok(bounced, "Wilds: a mushroom flings a hero over 4 tiles up (" + ((w.o.y - top - n.h) / T).toFixed(1) + ")");
+  }
+}
+for (const [region, label] of [[3, "Ironworks steam vent"], [6, "Sky Isles updraft"]]) {
+  const w = twistRoom(region, "updraft");
+  ok(!!w, label + " appears");
+  if (!w) continue;
+  const lvl = mk("plain", { region, tier: region, seed: w.seed }, ALL);
+  const b = lvl.players[1];
+  place(b, Math.floor(w.o.x / T) + 0.5, 16);
+  let top = b.y;
+  run(lvl, 4, () => [{}, {}], () => { top = Math.min(top, b.y); return false; });
+  ok((16 * T - (top + b.h)) > 3 * T, label + " lifts a hero (" + ((16 * T - top - b.h) / T).toFixed(1) + " tiles)");
+}
+
+/* ---- Guardians can be beaten, and escapes can be outrun ------------- */
+function guardianBot(region, powers, secs) {
+  const lvl = mk("shrine", { region, tier: region }, powers);
+  lvl.healthMode = true;
+  const gd = lvl.objects.find(o => o.guardian);
+  const P = lvl.players;
+  P.forEach((p, i) => place(p, 8 + i * 2, 16));
+  let t = 0;
+  const done = run(lvl, secs, (tt, i) => {
+    t = tt;
+    return P.map((p, k) => {
+      const me = {};
+      if (p.dead || !gd.alive) return me;
+      const dx = gd.cx - p.cx, dist = Math.abs(dx);
+      const danger = lvl.hostiles.some(h => Math.abs(h.x - p.cx) < 70 && (h.kind === "wave" || Math.abs(h.y - p.cy) < 60));
+      const beamLow = gd.beam && gd.beam.y > p.y + p.h - 30;
+      if (gd.st === "tired") {
+        if (dist > 40) me[dx > 0 ? "right" : "left"] = true;
+        else { p.facing = Math.sign(dx) || 1; me.meleePressed = i % 20 === k * 10; }
+        me.attackPressed = i % 30 === 0;
+      } else {
+        // keep a respectful distance, shoot if we can
+        if (dist < 150) me[dx > 0 ? "left" : "right"] = true;
+        me.attackPressed = i % 40 === k * 20;
+        if (gd.st === "charge" && dist < 170 && p.onGround) me.dodgePressed = true;
+      }
+      if ((danger || (beamLow && gd.beam.live === false && gd.beam.t < 0.25)) && p.onGround) { me.jumpPressed = true; me.up = true; }
+      else if (!p.onGround && p.vy < 0) me.up = true;
+      return me;
+    });
+  }, () => !gd.alive);
+  return { won: done, t: Math.round(t), deaths: lvl.deaths, hp: Math.round(gd.hp) };
+}
+if (process.env.GDBG) {
+  const reasons = {}; GG.bus.on("player:death", e => reasons[e.reason] = (reasons[e.reason] || 0) + 1);
+  const hurt = {}; GG.bus.on("player:hurt", () => {});
+  console.log(JSON.stringify(guardianBot(+process.env.GDBG, ALL, 60)), reasons); process.exit(0);
+}
+for (const [region, powers] of [[0, []], [3, upTo("strongarms")], [7, ALL]]) {
+  const r = guardianBot(region, powers, 150);
+  ok(r.won, `Guardian of region ${region} (${GG.GUARDIANS[region].name}) can be beaten by two heroes ${JSON.stringify(r)}`);
+}
+{
+  // the shrine stays sealed while the guardian lives, then escape: RUN
+  const lvl = mk("shrine", { region: 2, tier: 2 }, upTo("wallgrip"));
+  lvl.healthMode = true;
+  const sh = lvl.objects.find(o => o instanceof O.PowerShrine), gd = lvl.objects.find(o => o.guardian);
+  const P = lvl.players;
+  P[0].x = sh.cx - 30; P[0].y = sh.y + sh.h - P[0].h - 1; P[1].x = sh.cx + 8; P[1].y = sh.y + sh.h - P[1].h - 1;
+  run(lvl, 1, () => [{}, {}]);
+  ok(!sh.taken, "Shrine: sealed while its guardian is alive");
+  gd.takeHit(lvl, 999, 1); gd.hp = 0; if (gd.alive) gd.die(lvl);
+  let claimed = false;
+  lvl.onPower = () => { claimed = true; };
+  P[0].x = sh.cx - 30; P[0].y = sh.y + sh.h - P[0].h - 1; P[1].x = sh.cx + 8; P[1].y = sh.y + sh.h - P[1].h - 1;
+  run(lvl, 1, () => [{}, {}], () => claimed);
+  ok(claimed, "Shrine: opens once the guardian falls");
+  const esc = lvl.objects.find(o => o instanceof O.EscapeRun);
+  let left = false, fails0 = 0;
+  // two bots sprint for the doorway, hopping the rubble
+  const done = run(lvl, 14, () => P.map(p => {
+    const me = { left: true };
+    const block = lvl.objects.some(o => o instanceof O.Rubble && o.landed && p.x - (o.x + o.w) < 36 && p.x > o.x);
+    if (p.onGround && (block || p.hitWallDir < 0)) { me.jumpPressed = true; me.up = true; }
+    else if (!p.onGround && p.vy < 0) me.up = true;
+    return me;
+  }), (l) => P.every(p => !p.dead && p.x < 2 * T));
+  ok(esc.state === 1 && done && esc.fails === 0, `Escape: both heroes outrun the ${esc.S.kind} to the doorway (fails ${esc.fails})`);
+  // and standing still gets you caught (it's a real chase)
+  const lvl2 = mk("shrine", { region: 2, tier: 2 }, upTo("wallgrip"));
+  const e2 = lvl2.objects.find(o => o instanceof O.EscapeRun);
+  lvl2.setChannel(e2.channel, true);
+  run(lvl2, 12, () => [{}, {}]);
+  ok(e2.fails > 0, "Escape: dawdling means the wall catches you (and the run restarts)");
+}
+{
+  // Strike + combo + roll (on the flat floor by the left wall)
+  const lvl = mk("plain", { region: 1, tier: 1, seed: 11 }, ["arms"]);
+  lvl.healthMode = true;
+  const [n, b] = lvl.players;
+  const bug = lvl.addObject({ type: "beetle", x: 4 * T + 2, y: 16 * T - 20, tough: 3 });
+  bug.awake = false;
+  place(n, 3, 16); n.facing = 1; n.x = bug.x - n.w - 3;
+  b.x = 20 * T; b.y = 16 * T - b.h - 1;
+  const hp0 = bug.hp;
+  run(lvl, 0.3, (t, i) => [{ meleePressed: i === 1 }, {}]);
+  ok(bug.hp < hp0 && bug.stunT > 0 && bug.stunBy === 0, "Strike: Nichols' strike hurts and dazes a beetle");
+  let combo = false; const off = GG.bus.on("combo:finisher", () => { combo = true; });
+  n.x = 1 * T; b.x = bug.x - b.w - 3; b.y = 16 * T - b.h - 1; b.facing = 1; b.vx = b.vy = 0;
+  bug.stunT = 1; bug.stunBy = 0;
+  run(lvl, 0.3, (t, i) => [{}, { meleePressed: i === 1 }]);
+  if (off) off();
+  ok(combo, "Combo: Nibihah's follow-up on the dazed beetle is a co-op finisher");
+  // roll: invulnerable to creature contact
+  const lvl3 = mk("plain", { region: 1, tier: 1, seed: 11 }, ["arms"]);
+  lvl3.healthMode = true;
+  const n3 = lvl3.players[0]; place(n3, 2, 16); place(lvl3.players[1], 20, 16);
+  const hpA = n3.hp;
+  const bug3 = lvl3.addObject({ type: "beetle", x: 4 * T, y: 16 * T - 20, tough: 1 }); bug3.awake = false; bug3.kills = () => true;
+  n3.x = 4 * T - n3.w - 4;                                   // right up against it
+  run(lvl3, 0.6, (t, i) => [{ right: t > 0.05 && t < 0.32, dodgePressed: i === 8 }, {}]);
+  ok(n3.hp === hpA, "Roll: rolling through a creature doesn't cost a heart");
+  const lvl4 = mk("plain", { region: 1, tier: 1, seed: 11 }, ["arms"]);
+  lvl4.healthMode = true;
+  const n4 = lvl4.players[0]; place(n4, 2, 16); place(lvl4.players[1], 20, 16);
+  const bug4 = lvl4.addObject({ type: "beetle", x: 4 * T, y: 16 * T - 20, tough: 1 }); bug4.awake = false; bug4.kills = () => true;
+  run(lvl4, 0.4, () => [{ right: true }, {}]);
+  ok(n4.hp === n4.maxHp - 1 && !n4.dead, "Hearts: walking into a creature costs one heart, not a life (" + n4.hp + "/" + n4.maxHp + ")");
+}
+{
+  // measured jump limits don't move: a roll that runs off a ledge is clamped
+  const lvl = mk("plain", { region: 0, tier: 0, seed: 5 }, []);
+  const p = lvl.players[0]; heroOnFloor(lvl, p, 8);
+  run(lvl, 0.3, (t, i) => [{ right: true, dodgePressed: i === 1, jumpPressed: i === 10, up: i >= 10 }, {}]);
+  ok(Math.abs(p.vx) <= 211, "Roll: jumping out of a roll uses normal run speed (" + Math.round(p.vx) + ")");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

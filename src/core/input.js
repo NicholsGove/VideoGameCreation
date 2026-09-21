@@ -13,8 +13,9 @@
   const DEFAULT_BINDINGS = {
     // `special` = grapple/telekinesis (Nichols) or swing/dash (Nibihah).
     // `attack`  = Nichols' bolt gun / Nibihah's bow.
-    p0: { left: "KeyA", right: "KeyD", up: "KeyW", down: "KeyS", action: "KeyS", special: "KeyQ", attack: "KeyE" },
-    p1: { left: "ArrowLeft", right: "ArrowRight", up: "ArrowUp", down: "ArrowDown", action: "ArrowDown", special: "ShiftRight", attack: "Period" },
+    // `melee`   = close-range strike, `dodge` = a quick ground roll.
+    p0: { left: "KeyA", right: "KeyD", up: "KeyW", down: "KeyS", action: "KeyS", special: "KeyQ", attack: "KeyE", melee: "KeyX", dodge: "ShiftLeft" },
+    p1: { left: "ArrowLeft", right: "ArrowRight", up: "ArrowUp", down: "ArrowDown", action: "ArrowDown", special: "ShiftRight", attack: "Period", melee: "Comma", dodge: "ControlRight" },
   };
   // Global (non-player) keys.
   const GLOBAL_KEYS = { pause: "Escape", restart: "KeyR", confirm: "Enter" };
@@ -35,6 +36,17 @@
       this.lastDevice = "keyboard";
       this._padStartPrev = false;
       this.padStartPressed = false;
+      this._gp = [null, null];
+    }
+
+    /** Controller rumble (if the pad supports it and it's switched on). */
+    rumble(i, strong, weak, ms) {
+      const set = GG.save && GG.save.settings && GG.save.settings.gameplay;
+      if (set && set.rumble === false) return;
+      const gp = this._gp && this._gp[i];
+      try {
+        if (gp && gp.vibrationActuator) gp.vibrationActuator.playEffect("dual-rumble", { duration: ms || 120, strongMagnitude: strong || 0.5, weakMagnitude: weak || 0.3 });
+      } catch (_) {}
     }
 
     attach() {
@@ -100,6 +112,8 @@
         special: this.action(p, "special") || !!pad.special,
         specialPressed: this.actionPressed(p, "special") || !!pad.specialPressed,
         attackPressed: this.actionPressed(p, "attack") || !!pad.attackPressed,
+        meleePressed: this.actionPressed(p, "melee") || !!pad.meleePressed,
+        dodgePressed: this.actionPressed(p, "dodge") || !!pad.dodgePressed,
       };
     }
 
@@ -126,6 +140,8 @@
         special: down("special") || !!pad.special,
         specialPressed: pressed("special") || !!pad.specialPressed,
         attackPressed: pressed("attack") || !!pad.attackPressed,
+        meleePressed: pressed("melee") || !!pad.meleePressed,
+        dodgePressed: pressed("dodge") || !!pad.dodgePressed,
         pingPressed: this._pressed.has(pingKey),
       };
     }
@@ -147,6 +163,7 @@
         const jump = !!(b[0]);                        // A / cross
         const special = !!(b[3] || b[5]);             // Y / RB -> dash / grapple / tele / swing
         const attack = !!(b[1] || b[7]);              // B / RT -> weapon fire
+        const melee = !!b[4], dodge = !!(b[6] || b[10]);   // LB = strike, LT / L3 = roll
         const prevJump = this._padPrev[i].jump, prevSpecial = this._padPrev[i].special, prevAttack = this._padPrev[i].attack;
         const st = {
           left: b[14] || ax[0] < -0.4,
@@ -157,10 +174,13 @@
           action: !!b[2],                             // X
           special, specialPressed: special && !prevSpecial,
           attackPressed: attack && !prevAttack,
+          meleePressed: melee && !this._padPrev[i].melee,
+          dodgePressed: dodge && !this._padPrev[i].dodge,
           start: !!b[9],
         };
         this.pads[i] = st;
-        this._padPrev[i] = { jump, special, attack };
+        this._padPrev[i] = { jump, special, attack, melee, dodge };
+        this._gp[i] = gp;
         if (b.some(x => x) || Math.abs(ax[0]) > 0.3 || Math.abs(ax[1]) > 0.3) this.lastDevice = "gamepad";
         // Player-1 pad drives menu navigation + Start = pause.
         if (i === 0) {

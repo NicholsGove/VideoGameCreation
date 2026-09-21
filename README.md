@@ -66,6 +66,87 @@ barriers you break and arenas you clear stay that way. **Continue Journey** on
 the title screen resumes; the pause menu has *World Map*, *Back to the Doorway*
 (if you get stuck) and *Reset This Room*.
 
+### How the world looks, moves and sounds
+
+**Each region has its own look and light.** Stonework is drawn per region (cave
+strata, sunken brickwork, root-threaded earth, riveted steel, glassy ice with snow
+caps, temple blocks with gold trim, pale marble, glowing heart veins), with
+rounded outer corners and a soft bevel. Every room has 3 to 4 depth layers: the
+sky, far and near parallax, and a **foreground layer** that slides past in front of
+the camera (rock teeth, columns, leaves, chains, snow drifts, banners, clouds,
+shards). A giant **landmark** sits far behind each region (the Great Geode, the
+broken tower, the World Tree, the Great Furnace, the summit, the ziggurat, the
+floating citadel, the Heart), so you always know which way the region's heart is.
+
+| Region | Light | Terrain twist |
+|---|---|---|
+| Whispering Caves | cold blue, glowing crystals; some rooms are **pitch dark**, and the heroes' lights merge and grow when they stay close | |
+| Sunken Ruins | rippling water light | **tidal pools** that rise and fall; swim with JUMP |
+| Verdant Wilds | sun shafts through the canopy | **bounce mushrooms** and swaying vines |
+| The Ironworks | furnace glow and embers | **steam vents** that lift you on a timer, conveyor belts |
+| Frostpeak | blizzard fog | **slippery ice** and mountain gusts |
+| The Great Temple | gold torchlight | **sunbeam puzzles**: turn mirrors (ACTION) to steer light into sun crystals |
+| Sky Isles | bright open daylight | **updrafts** and more crumbling ground |
+| Heart of Aether | a purple heartbeat pulse | **heartbeat stones** that blink in time with the Heart |
+
+**The world reacts.** Grass bends as you run through it, vines and roots sway when
+you brush them, water splashes, and dust puffs up on landing. Colours always mean
+the same thing: red and magenta hurt, gold is interactive, green is Nichols, blue
+is Nibihah. Near a region border, the neighbour's plants creep in.
+
+**Movement.** Nichols is heavy (slower to speed up, falls fast, lands with a
+camera-shaking thud); Nibihah is light and quick to turn. Wall kicks, swings and
+tosses keep their **momentum**. Both heroes **grab ledges** they only just reach.
+Co-op moves: **toss** (Nichols presses ACTION with Nibihah on his head to throw her
+up), **catch** (hold ACTION to catch a falling partner on your head), and a
+**high five** at every shrine.
+
+**Sound.** A **combat layer** (pulse and low ostinato) fades into the music when
+beasts are near. Footsteps sound different on every surface, and each power and
+move has its own sound.
+
+### Guardians, escapes and rewards
+
+**Hearts.** In the Journey each hero has hearts (3 to start). Creatures, their
+shots and guardians cost a heart; spikes, lasers and pits are still a fall. A hit
+dazes a creature for a moment: if your **partner** lands the next hit it's a
+**co-op combo** (triple damage, +2 gems). Later regions field glowing **elite**
+creatures that drop extra gems. Fallen heroes come back in a column of light.
+
+**Guardians.** Every shrine is guarded, and each guardian fights the way its
+region plays: the Crystal Golem (slams, falling crystals, charges), the Tide
+Serpent (sweeping beams), the Thorn Queen (spores and summoned beasts), the
+Furnace Titan, the Frost Yeti, the Sun Idol (jump the low beam, stay down for the
+high one), the Storm Roc (dives) and the Hollow Heart. Each one warns before it
+attacks, then gets **dazed**, and that's the moment to strike for double damage.
+Shots bend a little toward guardians and flyers so you can hit them in the air.
+
+**Escapes.** Claiming a power wakes the region: rising water, a collapsing
+crystal wall, fire, an avalanche and so on chase the heroes back out of the
+shrine while rubble crashes down. Both have to make it; if either falls, the run
+restarts a little slower.
+
+**Rewards.** Dead ends and hidden vaults hold **Heart Crystals** (+1 heart for
+both) and **Energy Cells** (+20 shared energy). Gems are money now: Pell the
+Merchant waits in the first room and at every shrine once its guardian falls,
+selling region **maps**, perks (Gem Magnet, Thick Skin, Quick Recovery, Heavy
+Hitter) and **outfits** (hats and trinkets you can put on either hero). The full
+map lists the gems and upgrades still hidden in each region.
+
+**Getting around.** From a shrine you've made safe (or the first room), the
+pause menu offers **Fast Travel** to any other safe shrine. On the map, move the
+cursor with WASD or the arrows and press `P` or `Enter` to drop a **pin**.
+
+**Story.** Each region has someone to talk to (walk up, press `S` / `↓`), a short
+scene plays the first time you enter a region, and a hooded thief keeps showing
+up one room ahead of you until the very end.
+
+**Settings and replay.** Colourblind mode (a safe palette, stripes on everything
+that hurts, N and B letters on hero-only switches), Assist mode (+2 hearts, slower
+traps), reduced flashing, reduced shake, controller rumble, and a speedrun timer
+with per-power splits. There are **3 save slots**, and finishing the Journey
+unlocks **New Game+** (tougher beasts, faster traps, keep your outfits).
+
 The world is generated **deterministically** from a fixed seed
 (`src/world/worldgen.js`), so every player explores the same map, and the test
 suite proves every room is solvable (see *Tests*).
@@ -99,17 +180,39 @@ partner jumps noticeably lower, so stacking is powerful without being free.
 Both heroes are drawn as original procedural pixel art with a full animation set:
 idle, walk, run, jump, fall, land, push, climb, celebrate and defeated.
 
-## Title screen
+## Title screen, intro and story
 
-A cinematic opening plays on launch — fade-in, a studio card, then the glowing
-game logo — before a **living animated scene**: a day/night sky, parallax temple
-and rotating gears, drifting floating islands and clouds, fireflies, occasional
-birds, and Nichols & Nibihah idling beside the menu (with little interactions
-like a celebratory high-five). The logo floats, glows and pulses.
+**Opening.** The game waits on a single ember ("Press any key", because browsers
+only allow sound after your first key or click). Then: a spark in the dark and
+two heartbeats, the camera tilts down out of the stars onto the valley, "Aether
+Studios presents" appears across the sky, light gathers into the emblem, and the
+logo lands on a choir and timpani hit as the main theme begins. Any key skips it.
 
-**Secrets:** click the logo repeatedly for a gag; enter the Konami code
-(`↑↑↓↓←→←→↑↓`) for a retro-outfit easter egg; leave the title idle to trigger an
-**attract-mode** demo reel that tours the biomes before returning.
+**Title.** A night vista in the Ori style: aurora and nebulae, the Heart of Aether
+beating far away with rays of light, the eight region landmarks on the horizon,
+floating islands with waterfalls, a misty lake that catches the Heart's glow, and
+Nichols and Nibihah on a cliff under a glowing spirit tree, framed by swaying
+leaves and drifting lights, all with slow parallax. The emblem is the two compass
+halves (green for Nichols, blue for Nibihah) inside a turning gold ring.
+
+**Music.** `src/core/score.js` is a small synthesised orchestra (piano, strings,
+choir, bells, bass, timpani, whooshes and risers, through a generated hall
+reverb). The title theme is in D minor at 70 bpm: eight bars of harp and strings,
+then the melody with choir. Story scenes get their own mood (mystery, sorrow,
+wonder, tension, hope, joy, triumph) and each panel has its own sound as it
+appears. Gameplay music takes over when play starts.
+
+**Story panels.** `src/ui/paintings.js` repaints every story scene (prologue,
+the classic chapter endings, and the Journey ending) with layered skies,
+mountains fading into haze, light rays, glowing crystals, drifting motes and
+petals, and the heroes drawn large. Each panel slowly pans and zooms, panels
+cross-fade, and the lines are typed out as film subtitles in the bottom bar with
+the speaker's name above. The first key finishes the line, the next turns the
+page, `Esc` skips.
+
+**Secrets:** click the emblem five times, or enter the Konami code
+(`↑↑↓↓←→←→↑↓`). Leave the title idle and it plays a slideshow of the story
+paintings.
 
 ## Interface
 
@@ -126,11 +229,21 @@ animated **portrait** in a crystal frame with an ability rune, status shards, an
 a revive countdown; the pause menu is a floating tablet whose buttons slide in.
 Fonts load from the web when online and fall back to a styled system stack offline.
 
+**Tutorial tips.** Each mechanic is taught by an in-world tip card: a gold-rimmed
+glass card with the rule in a short paragraph (key words picked out in gold) and
+key caps tinted per hero (green for Nichols, blue for Nibihah). From afar a tip
+is just a small floating **?** rune, so it never clutters the view; it unfolds
+when a hero walks up and folds away when they leave. Press **H** in game to hide
+or show every tip, or pick *Smart*, *Always open* or *Hidden* under
+Settings > Gameplay > Tutorial tips.
+
 ## Controllers
 
 Gamepads are **auto-detected** (standard layout). Pad 1 → Nichols, Pad 2 →
 Nibihah; left stick / d-pad to move, **A** to jump, **X/B** to act, **Start** to
-pause. The menu is fully navigable by keyboard (arrows + Enter) or pad.
+pause, **LB** to strike, **LT** to roll. The menu is fully navigable by keyboard
+(arrows + Enter) or pad. Controllers rumble on hits, falls and guardian slams
+(switch it off in Settings).
 
 ## Controls
 
@@ -140,7 +253,11 @@ pause. The menu is fully navigable by keyboard (arrows + Enter) or pad.
 | Flip switch / repair / carry / throw / cells | `S` | `↓` |
 | Special (grapple / telekinesis · swing / dash) | `Q` | `Right Shift` |
 | **Attack** (bolt gun · bow) | `E` | `.` |
+| **Strike** (close range, from the start) | `X` | `,` |
+| **Dodge roll** (on the ground, costs a little energy) | `Left Shift` | `Right Ctrl` |
+| Talk to people · trade with the merchant · toss your partner | `S` | `↓` |
 | Ping a spot | `F` | `/` |
+| Hide / show tutorial tips | `H` | `H` |
 | Crawl (Nibihah) · brace · drop through one-way | hold `S` | hold `↓` |
 | World map (either player) | `M` / `Tab` | `M` / `Tab` |
 
@@ -299,7 +416,13 @@ the level-select screen.
 index.html            Loads scripts in dependency order (no build step)
 src/world/worldgen.js The open world: regions, rooms, doorways, chunks, gates (deterministic)
 src/world/world.js    Journey runtime: travel, powers, discovery %, room memory, saving
-src/world/creatures.js Creatures, doorways, shrines, light bridges, thorn barriers, arenas
+src/world/creatures.js Creatures, doorways, shrines, light bridges, thorn barriers, arenas,
+                      water, updrafts, bounce mushrooms, sun crystals
+src/world/decor.js    Flora, foreground layer, landmarks, region light, shared dark-room light
+src/world/guardians.js Guardians, escapes, rubble, upgrades, NPCs, the merchant, the thief, outfits
+src/core/score.js     The synthesised soundtrack: title theme, story moods, cinematic cues
+src/ui/paintings.js   The painted story panels (and the brushes the title screen uses)
+src/ui/title.js       Opening sequence, title vista, idle slideshow
 src/ui/worldmap.js    Full map + minimap
 styles.css            Retro UI theme
 src/
@@ -337,8 +460,13 @@ node tests/world.js    # open world: every room solvable from every doorway,
                        # no soft-locks, 100% reachable, idle-safety, render smoke
 node tests/powers.js   # real-physics bots perform every power trial
                        # (throw, mind-grip, chimney climb, grapple, dash, swing, boost)
+                       # plus toss, catch, sunbeams, heartbeat stones, water,
+                       # mushrooms, steam vents and updrafts; bots beat the
+                       # guardians and outrun an escape; strike, combo, roll
 node tests/online.js   # P1 = WASD only / P2 = arrows only, dropped-packet presses,
-                       # host/client world sync
+                       # host/client world sync, guardian fights and escapes online
+node tests/journey.js  # hearts & energy upgrades, the merchant, save slots,
+                       # New Game+, fast travel, map secrets, assist & colourblind
 node tests/verify.js   # the classic 70-level campaign
 ```
 

@@ -28,6 +28,12 @@
       this.name = data.name;
       this.theme = data.theme || "cave";
       this.dark = !!data.dark;
+      // Open-world rooms give heroes hearts (creatures hurt instead of kill).
+      this.healthMode = data.roomId != null;
+      // Assist mode / New Game+ scale how fast traps cycle (1 = normal).
+      this.hazardScale = 1;
+      this.hazT = 0;               // the traps' own clock (seconds)
+      this.floaters = [];          // floating combat text: {x,y,text,color,t}
 
       this.tilemap = new GG.Tilemap(data.tiles);
       cam.setBounds(this.tilemap.w, this.tilemap.h);
@@ -77,6 +83,8 @@
       // Open-world creatures & barriers that weapons can hurt, and the shots
       // creatures fire back (spores, laser bolts).
       this.hittables = this.objects.filter(o => o.hittable);
+      this.envObjs = this.objects.filter(o => typeof o.affectPlayers === "function");
+      this.receivers = this.objects.filter(o => o.isReceiver);
       this.hostiles = [];            // {x,y,vx,vy,r,life,grav,color,kind}
       // Story pets join after Chapter 2: Nova, a tiny celestial cat who walks
       // with Nichols, and Pip, a magical frog who hops after Nibihah.
@@ -194,6 +202,9 @@
       this.age = (this.age || 0) + dt;             // seconds since the room was entered
       if (this.won) { this.winTimer += dt; return; }
       if (this.started) this.timeMs += dt * 1000;
+      this.hazT += dt * this.hazardScale;
+      for (const f of this.floaters) { f.t -= dt; f.y -= 22 * dt; }
+      if (this.floaters.length) this.floaters = this.floaters.filter(f => f.t > 0);
       for (const p of this.players) p.pushing = false; // recomputed by crate/push passes
 
       // 1) Platforms move first (compute per-frame delta).
@@ -203,6 +214,10 @@
 
       // 3) Crates: push detection + gravity + collision.
       for (const c of this.crates) this._stepCrate(c, dt);
+
+      // 3b) Water, updrafts and other zones shape the heroes' physics.
+      for (const p of this.players) p.swimming = false;
+      for (const o of this.envObjs) o.affectPlayers(this, dt);
 
       // 4) Players. A swinging hero follows pendulum physics; a hero riding a
       //    jumping carrier is glued to their head for the flight.
@@ -220,12 +235,26 @@
           if (!p.onGround) p.teleHold.dropTele();   // knocked airborne -> lose grip
         } else p._rootX = p._rootY = null;
       }
+      // 4c-0) Co-op CATCH: a partner plunging past you can be grabbed (ACTION)
+      //       and set on your head.
+      for (const q of this.players) {
+        if (q.dead || !q.onGround || !q.input || !q.input.action) continue;
+        for (const p of this.players) {
+          if (p === q || p.dead || p.onGround || p.vy < 260 || p.swing) continue;
+          if (Math.abs(p.cx - q.cx) < 30 && p.y + p.h > q.y - 40 && p.y < q.y + q.h) {
+            p.x = q.cx - p.w / 2; p.y = q.y - p.h - 0.5; p.vy = 0; p.vx = q.vx;
+            p.squash = 0.7; q.squash = 0.8;
+            GG.bus.emit("player:catch", {});
+            this.fx.burst({ x: p.cx, y: p.y + p.h, count: 10, color: ["#fff", q.character.body], speed: 90, life: 0.3, glow: true });
+          }
+        }
+      }
       // 4c) Co-op: ride on a partner's head, and push each other around.
       this._carryPlayerRiders();
       this._resolvePlayerPush(dt);
       // 4d) Shared energy regenerates while no ability is drawing on it.
       const drawing = this.players.some(p => p.teleHold || p.swing);
-      if (!drawing) this.energy = Math.min(this.energyMax, this.energy + 12 * dt);
+      if (!drawing) this.energy = Math.min(this.energyMax, this.energy + 12 * (this.energyRegen || 1) * dt);
       // pings fade
       for (const g of this.pings) g.t -= dt;
       this.pings = this.pings.filter(g => g.t > 0);
@@ -237,9 +266,22 @@
           p._atkCd = 0.45;
           const arrow = p.character.id === "nibihah";   // the explorer shoots arrows
           // fire from the hip, not the chest — rats are ankle-height
+          GG.bus.emit("player:shoot", {});
+          const sp = arrow ? 440 : 540;
+          let vx = p.facing * sp, vy = arrow ? -50 : 0;
+          // gentle aim assist: shots bend toward a guardian or flyer ahead of you (up to ~40 degrees)
+          let best = null, bd = 1e9;
+          for (const h of this.hittables) {
+            if (h.alive === false || !(h.guardian || h.flying) || Math.sign(h.cx - p.cx) !== p.facing) continue;
+            const d = Math.abs(h.cx - p.cx); if (d < bd && d < 520) { bd = d; best = h; }
+          }
+          if (best) {
+            const a = U.clamp(Math.atan2(best.cy - (p.y + p.h - 12), Math.abs(best.cx - p.cx)), -0.7, 0.35);
+            vx = p.facing * Math.cos(a) * sp; vy = Math.sin(a) * sp;
+          }
           this.projectiles.push({
             x: p.cx + p.facing * 14, y: p.y + p.h - 12,
-            vx: p.facing * (arrow ? 440 : 540), vy: arrow ? -50 : 0,
+            vx, vy,
             from: p.index, arrow, life: 1.4,
           });
           GG.bus.emit("laser:shot", {});
@@ -256,7 +298,7 @@
           if (!r.deadRat && U.aabb(hit, r)) { r.takeHit(this, Math.sign(s.vx)); s.life = 0; break; }
         }
         if (s.life > 0) for (const h of this.hittables) {
-          if (h.alive !== false && U.aabb(hit, h.hitRect ? h.hitRect() : h)) { h.takeHit(this, 1, Math.sign(s.vx)); s.life = 0; break; }
+          if (h.alive !== false && U.aabb(hit, h.hitRect ? h.hitRect() : h)) { h.takeHit(this, 1, Math.sign(s.vx), s.from); s.life = 0; break; }
         }
         if (s.life > 0) for (const b of this.bosses) {
           if (!b.defeated && U.aabb(hit, b)) { b.takeHit(this, 1, Math.sign(s.vx)); s.life = 0; break; }
@@ -273,10 +315,15 @@
         }
         const r = h.r || 5, box = { x: h.x - r, y: h.y - r, w: r * 2, h: r * 2 };
         for (const p of this.players) {
-          if (!p.dead && U.aabb(box, p)) { p.kill(this, h.kind || "shot"); h.life = 0; break; }
+          if (!p.dead && U.aabb(box, p)) {
+            if (p.rollT > 0 || p.invuln > 0) continue;                // rolled through it
+            if (this.healthMode) p.hurt(this, h.dmg || 1, h.x); else p.kill(this, h.kind || "shot");
+            h.life = 0; break;
+          }
         }
       }
       this.hostiles = this.hostiles.filter(h => h.life > 0);
+      this._resolveMelee();
 
       // 4f) A wiped party lets the rat nests recover (they never respawn otherwise).
       if (this.players.every(p => p.dead)) {
@@ -296,14 +343,29 @@
       //    TeleCube's telekinesis brain still needs its update.
       for (const o of this.objects) {
         if ((o instanceof O.Crate && !o.tele) || o instanceof O.MovingPlatform) continue;
-        o.update(dt, this);
+        if (o.stunT > 0 && o.alive) {                 // dazed: a combo window for the partner
+          o.stunT -= dt; o._flash = Math.max(0, (o._flash || 0) - dt); o.t = (o.t || 0) + dt;
+          if (!o.flying && o.walk) { o.vx = U.damp(o.vx || 0, 0, 10, dt); o.walk(this, dt); }
+          continue;
+        }
+        const slow = o instanceof O.Crusher || o instanceof O.Blade || o instanceof O.Rock || (o instanceof O.Blinker && !o.sync);
+        o.update(slow ? dt * this.hazardScale : dt, this);
       }
 
       // 6) Lasers traced after mirrors/crates settled.
       this._laserHits.clear();
+      for (const r of this.receivers) r.lit = false;
       for (const l of this.lasers) this._traceLaser(l);
 
-      // 7) Collectibles.
+      // 7) Collectibles. (Gem Magnet: gems drift to a nearby hero.)
+      if (this.magnet) for (const g of this.gems) {
+        if (g.collected) continue;
+        for (const p of this.players) {
+          if (p.dead) continue;
+          const dx = p.cx - g.cx, dy = p.cy - g.cy, d = Math.hypot(dx, dy);
+          if (d < this.magnet) { const k = Math.min(1, 7 * dt); g.x += dx * k; g.y += dy * k; break; }
+        }
+      }
       for (const g of this.gems) for (const p of this.players) {
         const had = g.collected; g.tryCollect(p, this);
         if (!had && g.collected && p.feel) p.feel("excited", 1.4);   // a little delight
@@ -323,7 +385,10 @@
         }
         // moving hazards: crushers, blades, falling rocks
         if (!killed) for (const mh of this.movingHazards) {
-          if (mh.kills(p) && U.aabb(p, mh)) { p.kill(this, mh.constructor.name.toLowerCase()); killed = true; break; }
+          if (mh.kills(p) && U.aabb(p, mh.hitRect ? mh.hitRect() : mh)) {
+            if (mh.bites) { if (this.healthMode) { p.hurt(this, mh.dmg || 1, mh.cx); if (p.dead) { killed = true; break; } continue; } }
+            p.kill(this, mh.constructor.name.toLowerCase()); killed = true; break;
+          }
         }
         if (killed) continue;
         // Fell out of the world.
@@ -677,6 +742,8 @@
       // release: jump or a fresh special press
       if ((inp.jumpPressed || (inp.specialPressed && s.cool <= 0))) {
         p.swing = null;
+        p._momentum = true;                           // the swing's speed carries into the flight
+        GG.bus.emit("player:release", { index: p.index });
         p.jumpsLeft = Math.max(p.jumpsLeft, 1);      // keep her double jump alive
         this.fx.burst({ x: p.cx, y: p.cy, count: 6, color: p.character.body, speed: 80, life: 0.3, glow: true });
       }
@@ -783,6 +850,28 @@
       return null;
     }
 
+    /** Heroes' strikes: hit creatures, guardians and rats; knock shots away. */
+    _resolveMelee() {
+      for (const p of this.players) {
+        if (!p._meleeFresh || p.dead) continue;
+        p._meleeFresh = false;
+        const box = p.meleeBox();
+        let landed = false;
+        for (const h of this.hittables) {
+          if (h.alive === false || h.meleeProof) continue;           // thorn barriers need Aether Arms
+          if (U.aabb(box, h.hitRect ? h.hitRect() : h)) { h.takeHit(this, (h.guardian ? 1.5 : 2) * (this.meleeMul || 1), p.facing, p.index, true); landed = true; }
+        }
+        for (const r of this.rats) if (!r.deadRat && U.aabb(box, r)) { r.takeHit(this, p.facing); landed = true; }
+        for (const b of this.bosses) if (!b.defeated && U.aabb(box, b)) { b.takeHit(this, 1, p.facing); landed = true; }
+        // a strike swats creature shots out of the air
+        for (const h of this.hostiles) if (!h.solid && U.pointInRect(h.x, h.y, box)) { h.life = 0; landed = true; this.fx.burst({ x: h.x, y: h.y, count: 6, color: "#fff", speed: 90, life: 0.2 }); }
+        if (landed) { GG.bus.emit("player:strikehit", { index: p.index }); if (GG.input && GG.input.rumble) GG.input.rumble(p.index, 0.3, 0.5, 70); }
+      }
+    }
+
+    /** Floating combat text ("COMBO!", "+2 ◆", "+1 heart"). */
+    floatText(x, y, text, color) { this.floaters.push({ x, y, text, color: color || "#fff", t: 1.1 }); }
+
     _traceLaser(laser) {
       laser.segments = []; laser.ghost = null;
       const live = laser.active(this);
@@ -809,7 +898,11 @@
           continue;
         }
         // player hit (lasers are lethal to everyone)
-        if (live) for (const p of this.players) if (!p.dead && U.pointInRect(x, y, p)) this._laserHits.add(p);
+        if (laser.light) {
+          let hitR = null;
+          for (const r of this.receivers) if (U.pointInRect(x, y, r)) { hitR = r; break; }
+          if (hitR) { if (live) hitR.lit = true; break; }
+        } else if (live) for (const p of this.players) if (!p.dead && U.pointInRect(x, y, p)) this._laserHits.add(p);
       }
       laser.segments.push({ x1: sx, y1: sy, x2: x, y2: y });
       if (!live) { laser.ghost = laser.segments; laser.segments = []; }
@@ -1535,6 +1628,9 @@
         ctx.globalAlpha = 1; ctx.restore();
       }
 
+      // the region's giant landmark, far behind everything
+      if (this.renderLandmark) this.renderLandmark(ctx, cam);
+
       // Parallax layers, far to near.
       ctx.save();
       for (const L of bio.layers) L.paint(ctx, cam, L.d);
@@ -1561,6 +1657,13 @@
 
     renderWorld(ctx, cam) {
       this.tilemap.render(ctx, cam);
+      if (this.renderFlora) this.renderFlora(ctx, cam);
+      // elite creatures glow with a menacing aura
+      for (const o of this.hittables) if (o.elite && o.alive) {
+        const g = ctx.createRadialGradient(o.cx, o.cy, 2, o.cx, o.cy, 30);
+        g.addColorStop(0, "rgba(255,90,140,0.45)"); g.addColorStop(1, "rgba(255,90,140,0)");
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(o.cx, o.cy, 30, 0, Math.PI * 2); ctx.fill();
+      }
       // Objects: draw non-players. Order: platforms/doors/hazards then pickups then lasers on top.
       for (const o of this.objects) if (!(o instanceof O.Laser)) o.render(ctx, this);
       for (const l of this.lasers) l.render(ctx, this);
@@ -1585,7 +1688,15 @@
       for (const h of this.hostiles) {
         ctx.save();
         ctx.fillStyle = h.color || "#ff9aa4"; ctx.shadowBlur = 10; ctx.shadowColor = h.color || "#ff9aa4";
-        if (h.kind === "bolt") {
+        if (h.kind === "wave") {                       // a shockwave racing along the floor
+          ctx.globalAlpha = 0.85; ctx.shadowBlur = 14;
+          ctx.beginPath(); ctx.moveTo(h.x - 10, h.y + 12); ctx.quadraticCurveTo(h.x + Math.sign(h.vx) * 6, h.y - 16, h.x + 10, h.y + 12); ctx.fill();
+          ctx.fillStyle = "#fff"; ctx.fillRect(h.x - 2, h.y - 2, 4, 12);
+        } else if (h.kind === "rock") {                 // falling rock / icicle / seed
+          ctx.shadowBlur = 6;
+          ctx.fillStyle = "#3a3440"; ctx.beginPath(); ctx.moveTo(h.x, h.y - h.r); ctx.lineTo(h.x + h.r, h.y); ctx.lineTo(h.x + h.r * 0.4, h.y + h.r); ctx.lineTo(h.x - h.r * 0.7, h.y + h.r * 0.6); ctx.lineTo(h.x - h.r, h.y - h.r * 0.3); ctx.fill();
+          ctx.strokeStyle = h.color || "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
+        } else if (h.kind === "bolt") {
           const a = Math.atan2(h.vy, h.vx);
           ctx.translate(h.x, h.y); ctx.rotate(a);
           ctx.beginPath(); ctx.ellipse(0, 0, 8, 2.6, 0, 0, Math.PI * 2); ctx.fill();
@@ -1618,6 +1729,56 @@
         ctx.strokeRect(-s / 2, -s / 2, s, s);
         ctx.restore(); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
       }
+      this._renderCombatFx(ctx);
+      if (GG.colorblind) this._renderAssistMarks(ctx);
+    }
+
+    /** Colourblind assist: stripes on everything that hurts, letters on hero-only mechanisms. */
+    _renderAssistMarks(ctx) {
+      ctx.save();
+      const stripes = (r) => {
+        ctx.save(); ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
+        ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.lineWidth = 2;
+        for (let x = r.x - r.h; x < r.x + r.w; x += 8) { ctx.beginPath(); ctx.moveTo(x, r.y + r.h); ctx.lineTo(x + r.h, r.y); ctx.stroke(); }
+        ctx.restore();
+      };
+      for (const hz of this.hazards) if (hz.active(this)) stripes(hz);
+      ctx.setLineDash([6, 6]); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+      for (const l of this.lasers) if (!l.light) for (const sg of l.segments) { ctx.beginPath(); ctx.moveTo(sg.x1, sg.y1); ctx.lineTo(sg.x2, sg.y2); ctx.stroke(); }
+      ctx.setLineDash([]);
+      ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center";
+      for (const o of this.objects) {
+        const lock = o.colorLock || (o.player != null && o.constructor.name === "Exit" ? (o.player === 0 ? "green" : "blue") : null);
+        if (!lock) continue;
+        const letter = lock === "green" ? "N" : lock === "blue" ? "B" : "";
+        if (!letter) continue;
+        ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.beginPath(); ctx.arc(o.cx, o.y - 10, 7, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#fff"; ctx.fillText(letter, o.cx, o.y - 6.5);
+      }
+      ctx.restore();
+    }
+
+    /** Stun stars, elite auras and floating combat text (world space). */
+    _renderCombatFx(ctx) {
+      const t = (this.timeMs || 0) / 1000;
+      for (const o of this.hittables) {
+        if (!o.alive) continue;
+        if (o.stunT > 0) {
+          for (let i = 0; i < 3; i++) {
+            const a = t * 6 + i * 2.1;
+            ctx.fillStyle = "#ffe79a";
+            ctx.fillRect(o.cx + Math.cos(a) * 12 - 1.5, o.y - 8 + Math.sin(a) * 3, 3, 3);
+          }
+        }
+      }
+      ctx.save();
+      ctx.textAlign = "center"; ctx.font = "bold 12px sans-serif";
+      for (const f of this.floaters) {
+        ctx.globalAlpha = Math.min(1, f.t * 2);
+        ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillText(f.text, f.x + 1, f.y + 1);
+        ctx.fillStyle = f.color; ctx.fillText(f.text, f.x, f.y);
+      }
+      ctx.restore();
     }
 
     /** Subtle additive bloom: draws soft coloured glow around bright emitters
@@ -1658,6 +1819,7 @@
       };
       ctx.fillStyle = GRADE[this.theme] || GRADE.cave;
       ctx.fillRect(0, 0, vw, vh);
+      if (this.renderAmbience) this.renderAmbience(ctx, cam);
       if (!enabled && !this.dark) {
         const v = ctx.createRadialGradient(vw / 2, vh / 2, vh * 0.35, vw / 2, vh / 2, vh * 0.8);
         v.addColorStop(0, "rgba(0,0,0,0)"); v.addColorStop(1, "rgba(0,0,0,0.4)");
@@ -1679,8 +1841,10 @@
         gr.addColorStop(0, "rgba(0,0,0,1)"); gr.addColorStop(0.7, "rgba(0,0,0,0.9)"); gr.addColorStop(1, "rgba(0,0,0,0)");
         lc.fillStyle = gr; lc.beginPath(); lc.arc(sx, sy, r, 0, Math.PI * 2); lc.fill();
       };
-      for (const p of this.players) if (!p.dead) punch(p.cx, p.cy, this.dark ? 130 : 240);
+      for (const p of this.players) if (!p.dead) punch(p.cx, p.cy, this.dark ? (this.sharedLightRadius ? this.sharedLightRadius(p) : 130) : 240);
       for (const e of this.exits) punch(e.cx, e.cy, 70);
+      // glowing crystals, torches and lamps push back the dark too
+      for (const L of this.lights || []) punch(L.x, L.y - 8, (L.kind === "torch" ? 95 : L.kind === "lamp" ? 80 : 55) * (L.s || 1));
       lc.globalCompositeOperation = "source-over";
       ctx.drawImage(this._lightCanvas, 0, 0, vw, vh);
     }
@@ -1693,7 +1857,7 @@
         if (s !== null && s !== undefined) objState[o.id] = s;
       }
       return {
-        t: Math.round(this.timeMs),
+        t: Math.round(this.timeMs), ht: Math.round(this.hazT * 1000),
         ch: Object.assign({}, this.channels),
         keys: Object.assign({}, this.keys),
         gems: this.gemsCollected,
@@ -1704,23 +1868,29 @@
         broken: Array.from(this.tilemap._broken),
         // shots in flight (so the online partner sees bolts, arrows and spores)
         pj: this.projectiles.map(p => [Math.round(p.x), Math.round(p.y), Math.round(p.vx), Math.round(p.vy), p.arrow ? 1 : 0]),
-        hs: (this.hostiles || []).map(h => [Math.round(h.x), Math.round(h.y), Math.round(h.vx), Math.round(h.vy), h.kind === "bolt" ? 1 : 0]),
+        hs: (this.hostiles || []).map(h => [Math.round(h.x), Math.round(h.y), Math.round(h.vx), Math.round(h.vy), h.kind === "bolt" ? 1 : 0, h.kind || "spore", h.r || 5, h.color || ""]),
+        ft: this.floaters.map(f => [Math.round(f.x), Math.round(f.y), f.text, f.color, Math.round(f.t * 100)]),
+        dyn: this._dyn || null,
       };
     }
 
     applySnapshot(s) {
       if (!s) return;
       this.timeMs = s.t;
+      if (s.ht != null) this.hazT = s.ht / 1000;
+      if (s.ft) this.floaters = s.ft.map(a => ({ x: a[0], y: a[1], text: a[2], color: a[3], t: a[4] / 100 }));
       this.channels = s.ch || {};
       this.keys = s.keys || {};
       this.gemsCollected = s.gems || 0;
       this.deaths = s.deaths || 0;
       this.won = s.won;
       if (s.players) s.players.forEach((ps, i) => this.players[i] && this.players[i].setState(ps));
+      // things spawned mid-fight on the host (minions, rubble) appear here too
+      if (s.dyn && this.addObject) for (const cfg of s.dyn) if (!this.byId(cfg.id)) this.addObject(cfg);
       if (s.objs) for (const o of this.objects) if (s.objs[o.id] !== undefined && o.setState) o.setState(s.objs[o.id]);
       if (s.broken) this.tilemap._broken = new Set(s.broken);
       if (s.pj) this.projectiles = s.pj.map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3], arrow: !!a[4], life: 0.1 }));
-      if (s.hs) this.hostiles = s.hs.map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3], kind: a[4] ? "bolt" : "spore", r: a[4] ? 4 : 5, color: a[4] ? "#ff6ad5" : "#caff7a", life: 0.1 }));
+      if (s.hs) this.hostiles = s.hs.map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3], kind: a[5] || (a[4] ? "bolt" : "spore"), r: a[6] || (a[4] ? 4 : 5), color: a[7] || (a[4] ? "#ff6ad5" : "#caff7a"), life: 0.1 }));
     }
   }
 

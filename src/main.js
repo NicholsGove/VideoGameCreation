@@ -15,7 +15,8 @@
       GG.game.init();
 
       // Unlock/resume the AudioContext on the first user interaction.
-      const unlock = () => { GG.audio.resume(); GG.audio.startMusic(); window.removeEventListener("pointerdown", unlock); window.removeEventListener("keydown", unlock); };
+      // (on the title screen the title's own score takes over instead)
+      const unlock = () => { GG.audio.resume(); if (GG.game.state !== "menu") GG.audio.startMusic(); window.removeEventListener("pointerdown", unlock); window.removeEventListener("keydown", unlock); };
       window.addEventListener("pointerdown", unlock);
       window.addEventListener("keydown", unlock);
 

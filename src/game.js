@@ -79,6 +79,10 @@
         master: s.audio.master, music: s.audio.music, sfx: s.audio.sfx, voice: s.audio.voice,
       });
       this.cam.enabledShake = s.graphics.shake;
+      this.camL.enabledShake = this.camR.enabledShake = s.graphics.shake;
+      if (GG.setColorblind) GG.setColorblind(!!s.gameplay.colorblind);
+      // assist mode / perks change hearts and trap speed: re-apply live
+      if (this.worldMode && this.level && GG.world.state) GG.world.applyPowers(this.level);
       this.fx.enabled = s.graphics.particles;
       if (s.bindings) GG.input.setBindings(s.bindings);
     }
@@ -87,11 +91,11 @@
     // ---- Session lifecycle ----------------------------------------------
     // ---- Open world ---------------------------------------------------------
     /** Local co-op journey through the open world. fresh=true starts over. */
-    startWorld(fresh) {
+    startWorld(fresh, opts) {
       this.mode = "local"; this.role = "host";
       this.worldMode = true; this.mapOpen = false;
       GG.audio.resume(); GG.audio.startMusic();
-      const st = GG.world.begin(fresh);
+      const st = GG.world.begin(fresh, opts);
       this._loadRoom(st.room, st.door, { banner: true });
       this.state = "playing";
       GG.ui.hideMenus(); GG.ui.showHUD();
@@ -130,6 +134,15 @@
       lvl.onPower = (power) => this._onPowerGained(power);
       this.weather.setForLevel(data);
       GG.audio.setMusicTheme(data.theme);
+      if (GG.audio.setAmbience) GG.audio.setAmbience(data.theme);
+      // the first time the party sets foot in a region: a short scene
+      const ws = GG.world.state;
+      if (this._intro && this._intro.region !== data.region) this._intro = null;
+      if (ws && !GG.world.remote && data.region != null && !ws.seenRegions[data.region]) {
+        ws.seenRegions[data.region] = 1;
+        this._intro = { t: 0, region: data.region };
+        if (GG.score) { GG.score.cue("whoosh"); setTimeout(() => GG.score.cue("choir"), 500); }
+      }
       const tw = lvl.tilemap.w, th = lvl.tilemap.h;
       this.camL.setBounds(tw, th); this.camR.setBounds(tw, th);
       for (let i = 0; i < 30; i++) this.cam.update(0.1, lvl.players);   // settle instantly
@@ -155,6 +168,17 @@
       GG.world.persist();
       GG.bus.emit("teleport:used", {});
       this._travelFade = { t: 0, phase: "out", dest };
+    }
+
+    /** Fast travel between shrines (both heroes go together). */
+    fastTravel(roomId, door) {
+      if (this.mode === "online" && this.role === "client") return;
+      if (this.level) GG.world.captureRoom(this.level);
+      GG.world.state.room = roomId; GG.world.state.door = door;
+      GG.world.persist();
+      GG.bus.emit("teleport:used", {});
+      this.state = "playing"; GG.ui.hideMenus(); GG.ui.showHUD();
+      this._travelFade = { t: 0, phase: "out", dest: { room: roomId, door } };
     }
 
     _finishTravel(dest) {
@@ -184,12 +208,18 @@
       const st = GG.world.state;
       st.done = true;
       GG.world.persist();
-      const stats = { timeMs: st.timeMs, deaths: st.deaths, gems: st.gems, slain: st.slain, powers: st.powers.length, pct: GG.world.percent };
+      const stats = { timeMs: st.timeMs, deaths: st.deaths, gems: st.gems, slain: st.slain, powers: st.powers.length, pct: GG.world.percent,
+                      splits: Object.assign({}, st.splits), combos: st.combos || 0, ng: st.ng || 0, upgrades: Object.keys(st.upgrades || {}).length };
+      // best journey time (per New Game+ level)
+      const bests = GG.save.data.bestJourney || (GG.save.data.bestJourney = {});
+      const bk = "ng" + (st.ng || 0);
+      stats.best = !bests[bk] || st.timeMs < bests[bk];
+      if (stats.best) { bests[bk] = st.timeMs; GG.save.save(); }
       this._broadcastRoom({ ending: true, stats });
       GG.ui.toast("✦ 100% DISCOVERED ✦", "The Heart of Aether awakens…");
       setTimeout(() => {
         this.mapOpen = false;
-        this.playCutscene("ch6_end", () => { this._ending = false; this.worldMode = false; GG.ui.showWorldEnd(stats); });
+        this.playCutscene(GG.CUTSCENES.journey_end ? "journey_end" : "ch6_end", () => { this._ending = false; this.worldMode = false; GG.ui.showWorldEnd(stats); });
       }, 2600);
     }
 
@@ -284,11 +314,12 @@
 
     toMenu() {
       if (this.worldMode && this.level && !GG.world.remote) { GG.world.captureRoom(this.level); GG.world.persist(); }
-      this.worldMode = false; this.mapOpen = false;
+      this.worldMode = false; this.mapOpen = false; this._intro = null;
+      if (GG.audio.setAmbience) GG.audio.setAmbience(null);
       this.state = "menu"; this.level = null;
       if (this.mode === "online") GG.net.close();
       this.mode = "local";
-      GG.title.phase = "title"; GG.title.t = 0; GG.title.idle = 0;  // skip the intro on return
+      if (GG.title.returnToTitle) GG.title.returnToTitle(); else { GG.title.phase = "title"; GG.title.t = 0; GG.title.idle = 0; }  // skip the intro on return
       GG.ui.showMainMenu();
     }
 
@@ -299,6 +330,7 @@
       GG.ui.showPause();
     }
     resume() {
+      GG.ui._shopOpen = false;
       if (this.state === "paused") this.state = "playing";
       GG.ui.hideMenus(); GG.ui.showHUD();
     }
@@ -308,21 +340,26 @@
       GG.net.onInput((inp) => {                                   // host receives client input
         // Edges arrive as running counters (robust to dropped packets): any
         // increase since the last packet is a fresh press.
-        const seen = this._remoteSeen || (this._remoteSeen = { j: 0, s: 0, a: 0, p: 0 });
+        const seen = this._remoteSeen || (this._remoteSeen = { j: 0, s: 0, a: 0, p: 0, m: 0, d: 0 });
         const b = this._edgeBuf[1];
         if (inp.nj != null) {
           if (inp.nj > seen.j) b.jump = true;
           if (inp.ns > seen.s) b.special = true;
           if (inp.na > seen.a) b.attack = true;
           if (inp.np > seen.p) this._remotePing = true;
+          if ((inp.nm || 0) > seen.m) b.melee = true;
+          if ((inp.nd || 0) > seen.d) b.dodge = true;
+          seen.m = Math.max(seen.m, inp.nm || 0); seen.d = Math.max(seen.d, inp.nd || 0);
           seen.j = Math.max(seen.j, inp.nj); seen.s = Math.max(seen.s, inp.ns);
           seen.a = Math.max(seen.a, inp.na); seen.p = Math.max(seen.p, inp.np);
         } else {
           b.jump = b.jump || !!inp.jumpPressed;
           b.special = b.special || !!inp.specialPressed;
           b.attack = b.attack || !!inp.attackPressed;
+          b.melee = b.melee || !!inp.meleePressed;
+          b.dodge = b.dodge || !!inp.dodgePressed;
         }
-        this._remoteInput = Object.assign({}, inp, { jumpPressed: false, specialPressed: false, attackPressed: false });
+        this._remoteInput = Object.assign({}, inp, { jumpPressed: false, specialPressed: false, attackPressed: false, meleePressed: false, dodgePressed: false });
       });
       GG.net.onState((snap) => {                                  // client applies + reconciles
         if (!this.level) return;
@@ -389,7 +426,16 @@
       GG.bus.on("power:gained", worldAchv);
       GG.bus.on("map:discovered", worldAchv);
       GG.bus.on("creature:slain", () => { if (this.worldMode && GG.world.state) GG.world.state.slain = (GG.world.state.slain || 0) + 1; });
-      GG.bus.on("gem:collected", () => { if (this.worldMode && GG.world.state) GG.world.state.gems = (GG.world.state.gems || 0) + 1; });
+      GG.bus.on("gem:collected", () => { if (this.worldMode && GG.world.state && !GG.world.remote) GG.world.state.gems = (GG.world.state.gems || 0) + 1; });
+      GG.bus.on("shop:open", () => {
+        if (!this.worldMode || this.state !== "playing") return;
+        if (this.mode === "online" && this.role === "client") { GG.ui.toast("The merchant", "Player 1 does the trading"); return; }
+        if (this.mode === "local") this.state = "paused";
+        GG.ui.showShop();
+      });
+      GG.bus.on("boss:start", (e) => { this._bossBanner = { t: 0, name: e.name, title: e.title }; });
+      GG.bus.on("boss:defeated", () => { this._broadcastRoom({ update: true }); });
+      GG.bus.on("upgrade:found", () => { this._broadcastRoom({ update: true }); });
     }
 
     // ---- Per-frame -------------------------------------------------------
@@ -412,6 +458,17 @@
           (GG.input.wasPressed("KeyM") || GG.input.wasPressed("Tab"))) {
         if (this.state === "paused") { this.resume(); this.toggleMap(true); } else this.toggleMap();
       }
+      // H hides / shows the in-world tutorial tips (unless H was rebound to a move).
+      if (this.state === "playing" && this.level && GG.input.wasPressed("KeyH")) {
+        const b = GG.input.bindings || {};
+        const bound = [b.p0, b.p1].some(m => m && Object.values(m).includes("KeyH"));
+        if (!bound) {
+          const g = GG.save.settings.gameplay;
+          if (g.tutorials === "off") { g.tutorials = g._tutorialsWas || "smart"; GG.ui.toast("Tips shown", "Press H to hide them again"); }
+          else { g._tutorialsWas = g.tutorials || "smart"; g.tutorials = "off"; GG.ui.toast("Tips hidden", "Press H to bring them back"); }
+          GG.save.saveSettings(); GG.audio.sfx("uihover");
+        }
+      }
       // Co-op pings: F marks for Player 1, / (slash) for Player 2.
       if (this.state === "playing" && this.level) {
         const ping = (p) => {
@@ -427,12 +484,20 @@
         }
       }
 
+      // map cursor: move with WASD / arrows, P or Enter drops a pin
+      if (this.mapOpen && this.worldMode) this._mapKeys();
+      // region intro: any jump / Enter skips once it has been on screen a moment
+      if (this._intro) {
+        this._intro.t += dt;
+        const skip = this._intro.t > 1.2 && (GG.input.wasPressed("Enter") || GG.input.wasPressed("Space") || GG.input.actionPressed(0, "up") || GG.input.actionPressed(1, "up"));
+        if (this._intro.t > 5.2 || skip) this._intro = null;
+      }
       if (this.state === "playing") {
         const tf = this._travelFade;
         if (tf && tf.phase === "out") {
           tf.t += dt;
           if (tf.t >= 0.24) { const d = tf.dest; this._travelFade = null; this._finishTravel(d); }
-        } else if (!(this.mapOpen && this.mode === "local")) {
+        } else if (!((this.mapOpen || this._intro) && this.mode === "local")) {
           this._sim(dt);
         }
       }
@@ -454,7 +519,10 @@
       snap.jumpPressed = snap.jumpPressed || !!b.jump;
       snap.specialPressed = snap.specialPressed || !!b.special;
       snap.attackPressed = snap.attackPressed || !!b.attack;
+      snap.meleePressed = snap.meleePressed || !!b.melee;
+      snap.dodgePressed = snap.dodgePressed || !!b.dodge;
       b.jump = snap.jumpPressed; b.special = snap.specialPressed; b.attack = snap.attackPressed;
+      b.melee = snap.meleePressed; b.dodge = snap.dodgePressed;
       return snap;
     }
 
@@ -481,12 +549,14 @@
         const mine = this._buildLocalInput();
         // Press-edges travel as running counters: the fast lane is unreliable,
         // and a dropped packet must never swallow a jump or a shot.
-        const n = this._edgeN || (this._edgeN = { j: 0, s: 0, a: 0, p: 0 });
+        const n = this._edgeN || (this._edgeN = { j: 0, s: 0, a: 0, p: 0, m: 0, d: 0 });
+        if (mine.meleePressed) n.m++;
+        if (mine.dodgePressed) n.d++;
         if (mine.jumpPressed) n.j++;
         if (mine.specialPressed) n.s++;
         if (mine.attackPressed) n.a++;
         if (mine.pingPressed) n.p++;
-        GG.net.sendInput(Object.assign({}, mine, { nj: n.j, ns: n.s, na: n.a, np: n.p }));
+        GG.net.sendInput(Object.assign({}, mine, { nj: n.j, ns: n.s, na: n.a, np: n.p, nm: n.m, nd: n.d }));
         lvl.players[1].input = mine;       // local echo (overwritten by snapshots)
       }
 
@@ -502,7 +572,7 @@
           const me = lvl.players[1];
           if (!me.dead) me.update(C.FIXED_DT, lvl);
           this._accum -= C.FIXED_DT; psteps++;
-          me.input = Object.assign({}, me.input, { jumpPressed: false, specialPressed: false, attackPressed: false });
+          me.input = Object.assign({}, me.input, { jumpPressed: false, specialPressed: false, attackPressed: false, meleePressed: false, dodgePressed: false });
         }
       } else {
         // Fixed-timestep authoritative simulation.
@@ -537,6 +607,16 @@
           GG.bus.emit("map:discovered", { pct: GG.world.percent });
           if (GG.world.complete) this._worldEnding();
         }
+      }
+      // Beasts nearby? Bring in the combat layer of the music.
+      if (this.worldMode && lvl === this.level && GG.audio && GG.audio.setCombat) {
+        let near = 0;
+        for (const o of lvl.objects) {
+          if (!(o instanceof GG.obj.Creature) || !o.alive) continue;
+          if (lvl.players.some(p => !p.dead && Math.abs(p.cx - o.cx) < 420 && Math.abs(p.cy - o.cy) < 300)) near++;
+        }
+        const big = lvl.objects.some(o => (o.guardian && o.alive && o.awake === true) || (o.front != null && o.state === 1));
+        GG.audio.setCombat(big ? 1 : near ? Math.min(1, 0.5 + near * 0.25) : 0);
       }
       // Win transition (works for host and client via level.won).
       if (lvl.won && !this._wasWon) {
@@ -649,7 +729,104 @@
         else { tf.t += dt; a = Math.max(0, 1 - tf.t / 0.35); if (a <= 0) this._travelFade = null; }
         ctx.fillStyle = `rgba(4,4,10,${a})`; ctx.fillRect(0, 0, W, H);
       }
-      if (this.mapOpen) GG.worldmap.drawFull(ctx, this.level, t);
+      this._renderBossBar(ctx, dt);
+      this._renderSpeedrun(ctx);
+      if (this._intro) this._renderIntro(ctx, dt);
+      if (this.mapOpen) GG.worldmap.drawFull(ctx, this.level, t, this._mapCursor);
+    }
+
+    /** A guardian's health across the bottom of the screen, and its name card. */
+    _renderBossBar(ctx, dt) {
+      const lvl = this.level, W = C.VIEW_W, H = C.VIEW_H;
+      const g = lvl.objects.find(o => o.guardian && o.alive && o.awake === true);
+      const bb = this._bossBanner;
+      if (bb) {
+        bb.t += dt;
+        if (bb.t > 3) this._bossBanner = null;
+        else {
+          const a = bb.t < 0.4 ? bb.t / 0.4 : bb.t > 2.4 ? (3 - bb.t) / 0.6 : 1;
+          ctx.save(); ctx.globalAlpha = a; ctx.textAlign = "center";
+          ctx.fillStyle = "rgba(5,4,12,0.6)"; ctx.fillRect(0, H / 2 - 50, W, 74);
+          ctx.fillStyle = "#ff8a8a"; ctx.font = "700 30px 'Cinzel', Georgia, serif"; ctx.shadowBlur = 16; ctx.shadowColor = "#ff5a6a";
+          ctx.fillText(bb.name, W / 2, H / 2 - 8); ctx.shadowBlur = 0;
+          ctx.fillStyle = "#e8dcc0"; ctx.font = "italic 14px Georgia, serif"; ctx.fillText(bb.title, W / 2, H / 2 + 14);
+          ctx.restore();
+        }
+      }
+      if (!g) return;
+      const w = 420, x = (W - w) / 2, y = H - 38;
+      ctx.save();
+      ctx.fillStyle = "rgba(5,4,12,0.75)"; ctx.fillRect(x - 6, y - 18, w + 12, 30);
+      ctx.fillStyle = "#f6ecd2"; ctx.font = "700 11px 'Cinzel', Georgia, serif"; ctx.textAlign = "center";
+      ctx.fillText(g.G.name + (g.phase2 ? "  ·  ENRAGED" : "") + (g.vulnerable ? "  ·  DAZED, STRIKE NOW!" : ""), W / 2, y - 5);
+      ctx.fillStyle = "rgba(255,255,255,0.12)"; ctx.fillRect(x, y, w, 7);
+      ctx.fillStyle = g.vulnerable ? "#ffe79a" : g.G.col; ctx.fillRect(x, y, w * Math.max(0, g.hp / g.maxHp), 7);
+      ctx.restore();
+    }
+
+    /** Speedrun timer + the last split (Settings > Gameplay). */
+    _renderSpeedrun(ctx) {
+      const gp = GG.save.settings.gameplay;
+      if (!gp.speedrun || !GG.world.state) return;
+      const st = GG.world.state, ms = st.timeMs || 0;
+      const txt = U.formatTime(ms);
+      ctx.save(); ctx.textAlign = "left";
+      ctx.fillStyle = "rgba(5,4,12,0.7)"; ctx.fillRect(12, C.VIEW_H - 50, 170, 38);
+      ctx.fillStyle = "#6ef0a0"; ctx.font = "700 16px monospace"; ctx.fillText(txt, 20, C.VIEW_H - 30);
+      const last = Object.entries(st.splits || {}).sort((a, b) => b[1] - a[1])[0];
+      if (last) { ctx.fillStyle = "#cdb488"; ctx.font = "10px monospace"; ctx.fillText(GG.WORLDGEN.POWERS[last[0]].name + " " + U.formatTime(last[1]).split(".")[0], 20, C.VIEW_H - 17); }
+      ctx.restore();
+    }
+
+    /** The first steps into a region: a short scene with its landmark and lore. */
+    _renderIntro(ctx, dt) {
+      const it = this._intro, W = C.VIEW_W, H = C.VIEW_H, t = it.t;
+      const reg = GG.WORLDGEN.REGIONS[it.region];
+      const a = t < 0.6 ? t / 0.6 : t > 4.4 ? Math.max(0, (5.2 - t) / 0.8) : 1;
+      ctx.save();
+      ctx.globalAlpha = a;
+      // letterbox bars slide in
+      const bar = 70 * Math.min(1, t / 0.5);
+      ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, "rgba(0,0,0,0.15)"); g.addColorStop(0.5, "rgba(5,4,12,0.55)"); g.addColorStop(1, "rgba(0,0,0,0.15)");
+      ctx.fillStyle = g; ctx.fillRect(0, bar, W, H - bar * 2);
+      // the region's landmark rises out of the dark
+      const lvl = this.level;
+      if (lvl && lvl.renderLandmark && lvl.data.landmark) {
+        ctx.save(); ctx.globalAlpha = a * 0.9;
+        const lm = lvl.data.landmark;
+        const fake = { viewW: W, viewH: H, x: lm.wx - lm.ox - W / 2, y: lm.wy - lm.oy - H / 2 - 40 + (1 - Math.min(1, t / 2)) * 80, zoom: 1 };
+        lvl.renderLandmark(ctx, fake);
+        ctx.restore();
+      }
+      ctx.textAlign = "center";
+      ctx.fillStyle = reg.color; ctx.font = "700 34px 'Cinzel', Georgia, serif"; ctx.shadowBlur = 20; ctx.shadowColor = reg.color;
+      ctx.fillText(reg.name, W / 2, H / 2 - 10); ctx.shadowBlur = 0;
+      ctx.fillStyle = "#e8dcc0"; ctx.font = "italic 15px Georgia, serif";
+      const lines = reg.lore || [];
+      lines.forEach((l, i) => { ctx.globalAlpha = a * U.clamp((t - 0.9 - i * 0.7) / 0.6, 0, 1); ctx.fillText(l, W / 2, H / 2 + 24 + i * 22); });
+      ctx.globalAlpha = a * 0.6; ctx.font = "10px Georgia, serif"; ctx.fillStyle = "#cdb488";
+      if (t > 1.2) ctx.fillText("Jump or Enter to continue", W / 2, H - bar + 22 > H - 20 ? H - 24 : H - bar + 22);
+      ctx.restore();
+    }
+
+    /** Map cursor + pins. */
+    _mapKeys() {
+      const I = GG.input, st = GG.world.state; if (!st) return;
+      const cur = GG.world.world.rooms[st.room];
+      if (!this._mapCursor || this._mapCursor.room !== st.room) this._mapCursor = { x: cur.x, y: cur.y, room: st.room };
+      const c = this._mapCursor;
+      if (I.wasPressed("KeyA") || I.wasPressed("ArrowLeft")) c.x--;
+      if (I.wasPressed("KeyD") || I.wasPressed("ArrowRight")) c.x++;
+      if (I.wasPressed("KeyW") || I.wasPressed("ArrowUp")) c.y--;
+      if (I.wasPressed("KeyS") || I.wasPressed("ArrowDown")) c.y++;
+      if (I.wasPressed("KeyP") || I.wasPressed("Enter") || I.wasPressed("Space")) {
+        const k = c.x + "," + c.y, i = st.pins.indexOf(k);
+        if (i >= 0) st.pins.splice(i, 1); else st.pins.push(k);
+        GG.bus.emit(i >= 0 ? "ui:transition" : "ui:confirm");
+        GG.world.persist(); this._broadcastRoom({ update: true });
+      }
     }
 
     /** Split-screen kicks in (local only) when players separate a lot. */
@@ -678,11 +855,13 @@
       this.weather.renderWorld(ctx, cam, lvl);
       ctx.restore();
 
+      if (lvl.renderForeground) lvl.renderForeground(ctx, cam);
       lvl.renderLighting(ctx, cam, g.lighting, g.bloom !== false);
       this.weather.renderFront(ctx, cam, lvl);
 
       // Death flash: a red-black pulse that swallows the view and fades out
       // as the fallen hero respawns.
+      if (this._deathFlash > 0 && g.flash === false) this._deathFlash = 0;
       if (this._deathFlash > 0) {
         this._deathFlash -= dt;
         const a = Math.max(0, this._deathFlash / 0.45);

@@ -53,7 +53,7 @@ global.document = { createElement: () => el(), getElementById: () => el(), addEv
 
 for (const f of [
   "core/utils.js", "core/events.js", "core/statemachine.js", "core/input.js", "core/camera.js", "core/particles.js",
-  "core/weather.js", "entities/sprites.js", "world/objects.js", "world/tilemap.js", "world/levels.js", "world/level.js", "entities/player.js",
+  "core/weather.js", "entities/sprites.js", "world/objects.js", "world/tilemap.js", "world/levels.js", "world/level.js", "world/decor.js", "world/guardians.js", "entities/player.js",
   "net/network.js", "game.js",
 ]) vm.runInThisContext(fs.readFileSync(path.join(ROOT, "src", f), "utf8"), { filename: f });
 

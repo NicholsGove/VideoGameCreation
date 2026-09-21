@@ -316,21 +316,24 @@
     ["arena", 1, 3], ["creatures", 1, 4],
     ["dblwall", 3, 3, "skystep"], ["throwplate", 4, 3, "strongarms"], ["dashgap", 5, 3, "winddash"],
     ["grapplegap", 6, 3, "grapple"], ["swinggap", 7, 3, "swing"], ["telelift", 8, 3, "tele"],
+    ["sunbeam", 5, 3], ["heartbeat", 7, 3],
   ];
   const TUTORIALS = {
     boostwall: ["CLIMB TOGETHER", ["Too tall for one? Stand at the wall and let your", "partner jump onto your HEAD, then up. Pull the", "lever on top to raise steps for the one below."]],
-    twolever: ["TWO LEVERS", ["GREEN levers answer to Nichols, BLUE to Nibihah.", "The gate needs both. Each stands in their own", "element — lightning for him, poison for her."]],
+    twolever: ["TWO LEVERS", ["GREEN levers answer to Nichols, BLUE to Nibihah.", "The gate needs both. Each stands in their own", "element, lightning for him, poison for her."]],
     holddoor: ["HOLD THE DOOR", ["A plate only holds the gate while someone stands", "on it. Cross, then hold the far plate for your partner."]],
     heavycrate: ["HEAVY LIFTING", ["These plates want CARGO, not heroes.", "Only Nichols can shove the heavy crates."]],
     tandem: ["IN STEP", ["Twin plates: BOTH must be pressed at once."]],
     runes: ["RUNE SONG", ["Step the runes IN ORDER. Coloured runes answer", "only to their hero. A wrong step resets the song."]],
-    key: ["THE HIGH KEY", ["The key sits too high for one hero alone.", "Boost your partner up — then unlock the gate."]],
-    timed: ["RACE THE CLOCK", ["The hourglass lever opens the gate for a few", "seconds. Pull it — then BOTH sprint through."]],
+    key: ["THE HIGH KEY", ["The key sits too high for one hero alone.", "Boost your partner up, then unlock the gate."]],
+    timed: ["RACE THE CLOCK", ["The hourglass lever opens the gate for a few", "seconds. Pull it, then BOTH sprint through."]],
     elements: ["SPLIT PATHS", ["Lightning below: only Nichols survives it.", "Poison above: only Nibihah. Take your own road."]],
     battery: ["POWER CELLS", ["Either hero lifts a cell with ACTION (S / ▼).", "Carry it to the cradle to power the gate."]],
     arena: ["AMBUSH", ["The chamber seals until every beast is down.", "Shoot with E (Nichols) and . (Nibihah)."]],
     lasers: ["TIMED LASERS", ["Beams flicker a warning, then fire.", "Cross while they are dark."]],
-    creatures: ["WILD THINGS", ["Beetles CHARGE, toads spit LASERS, bats swoop.", "Watch for the tell — then strike back."]],
+    creatures: ["WILD THINGS", ["Beetles CHARGE, toads spit LASERS, bats swoop.", "Watch for the tell, then strike back."]],
+    sunbeam: ["SUNBEAMS", ["Golden light is harmless. Stand at a MIRROR and", "press ACTION to turn it. Steer the beam into", "the sun crystal to open the gate."]],
+    heartbeat: ["THE HEART BEATS", ["These stones pulse with the Heart.", "Step in time: lub... dub... GO."]],
   };
 
   function plan(world, seed) {
@@ -374,9 +377,11 @@
             cell.content = pm || "creatures"; used.add("power");
           } else {
             const pool = MOD_POOL.filter(m => tier >= m[1] && !used.has(m[0]) && !(room.region === 0 && room.kind !== "bonus" && (m[0] === "creatures" || m[0] === "arena")));
-            let tot = 0; for (const m of pool) tot += m[2] * (m[3] ? 2.2 : 1);
+            const wt = (m) => m[2] * (m[3] ? 2.2 : 1) * (room.region === 6 && m[0] === "crumble" ? 2.5 : 1)
+              * (room.region === 5 && m[0] === "sunbeam" ? 3 : 1) * (room.region === 7 && m[0] === "heartbeat" ? 4 : 1);
+            let tot = 0; for (const m of pool) tot += wt(m);
             let r = R() * tot, pick = pool[0];
-            for (const m of pool) { r -= m[2] * (m[3] ? 2.2 : 1); if (r <= 0) { pick = m; break; } }
+            for (const m of pool) { r -= wt(m); if (r <= 0) { pick = m; break; } }
             cell.content = pick[0]; used.add(pick[0]);
           }
         }
@@ -479,6 +484,7 @@
         room, reg, g, W, H, put, fillG, blocked, theme, arrivals,
         ox: cell.i * CW, oy: cell.j * CH, cell, R: rng(cell.seed),
         ch: (n) => `k${cell.i}_${cell.j}_${n}`,
+        upgrade: world.extras && world.extras.upg[id + ":" + cell.i + "," + cell.j],
       };
       CHUNK[cell.content] ? CHUNK[cell.content](cx) : CHUNK.plain(cx);
       if (cell.tutor && TUTORIALS[cell.tutor]) {
@@ -487,7 +493,39 @@
         put({ type: "tutor", x: (cx.ox + col) * T, y: (cx.oy + 8) * T, title, lines });
       }
       if (cell.creatures) spawnCreatures(cx, cell.creatures);
+      twist(cx);
     }
+    // --- extras: a vault's upgrade, a region's storyteller, the thief -----
+    const ex = world.extras && world.extras.room[id];
+    if (ex) for (const e of ex) {
+      const cell = room.cells.find(c => c.i === e.i && c.j === e.j) || room.cells[0];
+      const ox = cell.i * CW, oy = cell.j * CH;
+      if (e.what === "upgrade") {
+        // somewhere open in the air, above a floor you can reach
+        let spot = null;
+        for (const r of [13, 12, 14, 11, 10]) for (const c of [16, 15, 17, 12, 20, 9, 23, 6, 26]) {
+          if (spot) break;
+          if (g[oy + r][ox + c] !== E || g[oy + r - 1][ox + c] !== E) continue;
+          let d = 1; while (d <= 3 && g[oy + r + d][ox + c] === E) d++;
+          if (d <= 3 && !blocked.has((ox + c) + "," + (oy + r))) spot = [c, r];
+        }
+        if (spot) put({ type: "upgrade", kind: e.kind, uid: e.uid, x: (ox + spot[0]) * T + 5, y: (oy + spot[1]) * T + 5 });
+      } else {
+        // stand on bare floor in the cell, away from doorways and hazards
+        let col = -1;
+        const pref = e.what === "thief" ? [26, 25, 24, 7, 8, 22, 9] : [6, 7, 8, 25, 24, 9, 23, 10];
+        for (const c of pref) {
+          const cc = ox + c;
+          if (g[oy + 16][cc] !== E && g[oy + 15][cc] === E && g[oy + 14][cc] === E && g[oy + 13][cc] === E &&
+              !blocked.has(cc + "," + (oy + 15)) && !arrivals.some(a => a && a.some(p => Math.abs(p.x / T - cc) < 4 && Math.abs(p.y / T - (oy + 16)) < 3))) { col = cc; break; }
+        }
+        if (col < 0) continue;
+        blocked.add(col + "," + (oy + 15));
+        if (e.what === "npc") put({ type: "npc", region: room.region, x: col * T, y: (oy + 16) * T - 30 });
+        else put({ type: "thief", uid: e.uid, x: col * T, y: (oy + 16) * T - 28 });
+      }
+    }
+
     // --- gems: a few sparkles in the air above floors
     const Rg = rng(id * 977 + 13);
     for (let n = 0; n < room.gems; n++) {
@@ -502,9 +540,19 @@
       id: 1000 + id, roomId: id, startSpawn, name: roomName(room), theme, biome: reg.name,
       region: room.region, cols: W, rows: H, tiles: g, objects: objs, arrivals,
       spawns: arrivals[0] ? arrivals[0].map((a, k) => ({ x: a.x, y: a.y - (k === 0 ? 30 : 24) })) : [{ x: 3 * T, y: 15 * T - 30 }, { x: 4 * T, y: 15 * T - 24 }],
-      chapter: 3, style: STYLES[theme] || STYLES.cave, dark: false,
+      chapter: 3, style: STYLES[theme] || STYLES.cave, dark: isDark(room),
       hint: reg.name,
     };
+    // the region's landmark, seen from every room in it
+    if (world.landmarks && world.landmarks[room.region]) {
+      const lm = world.landmarks[room.region];
+      def.landmark = Object.assign({ ox: room.x * CW * T, oy: room.y * CH * T }, lm);
+    }
+    // rooms on a region border borrow a little of the neighbour's plant life
+    for (const d of room.doors) {
+      const other = world.rooms[d.to];
+      if (other && other.region !== room.region) { def.blend = REGIONS[other.region].theme; break; }
+    }
     return def;
   }
 
@@ -522,6 +570,8 @@
     const farN = (c, r, n) => cx.arrivals.every(a => !a || a.every(p => Math.abs(p.x / T - c) > n || Math.abs(p.y / T - r) > 6));
     const kinds = reg.creatures.length ? reg.creatures : ["beetle", "toad"];
     const tough = 1 + room.tier * 0.12;
+    const Re = rng((cx.cell.seed ^ 0x3e11) >>> 0);
+    const elite = () => room.tier >= 3 && Re.chance(0.16 + room.tier * 0.02);   // later regions field ELITES
     for (let k = 0; k < n; k++) {
       const kind = R.pick(kinds);
       for (let tries = 0; tries < 30; tries++) {
@@ -529,13 +579,13 @@
         if (kind === "bat") {
           const r = oy + 1;
           if (!farN(c, r + 4, 10)) continue;
-          if (g[r - 1][c] !== E && g[r][c] === E && g[r + 1][c] === E) { put({ type: "bat", x: c * T + 4, y: r * T + 2, tough, seed: R.int(1, 99) }); break; }
+          if (g[r - 1][c] !== E && g[r][c] === E && g[r + 1][c] === E) { put({ type: "bat", x: c * T + 4, y: r * T + 2, tough, seed: R.int(1, 99), elite: elite() }); break; }
           continue;
         }
         if (kind === "moth") {
           const r = oy + R.int(6, 9);
           if (!farN(c, r, 13)) continue;
-          if (g[r][c] === E && g[r][c + 1] === E && g[r + 1][c] === E) { put({ type: "moth", x: c * T, y: r * T, tough, seed: R.int(1, 99) }); break; }
+          if (g[r][c] === E && g[r][c + 1] === E && g[r + 1][c] === E) { put({ type: "moth", x: c * T, y: r * T, tough, seed: R.int(1, 99), elite: elite() }); break; }
           continue;
         }
         // ground creatures: find the surface below a free column
@@ -545,7 +595,7 @@
         if (blocked.has(c + "," + r) || blocked.has((c + 1) + "," + r)) continue;
         if (!farN(c, r, kind === "toad" || kind === "spitter" ? 13 : 12)) continue;
         const h = { beetle: 20, toad: 22, rat: 14, spitter: 26 }[kind] || 20;
-        put({ type: kind, x: c * T + 2, y: (r + 1) * T - h, tough, seed: R.int(1, 99), dir: R.chance(0.5) ? 1 : -1 });
+        put({ type: kind, x: c * T + 2, y: (r + 1) * T - h, tough, seed: R.int(1, 99), dir: R.chance(0.5) ? 1 : -1, elite: elite() });
         blocked.add(c + "," + r);
         break;
       }
@@ -578,6 +628,118 @@
       if (maxRow >= 2 && R.chance(0.08)) block(cx, c, 1, c, 2, S);
     }
   };
+
+  /** About a third of the cave rooms are pitch dark (never the first room). */
+  function isDark(room) {
+    if (room.region !== 0 || room.kind === "start" || room.kind === "shrine") return false;
+    return ((room.id * 2654435761) >>> 0) % 100 < 30;
+  }
+
+  /** Columns [c, c+w) where the floor is flat, bare and open up to row `top`. */
+  function flatSpot(cx, w, top, lo, hi) {
+    const { g, ox, oy, R, blocked } = cx;
+    const spots = [];
+    for (let c = lo; c + w - 1 <= hi; c++) {
+      let good = true;
+      for (let k = 0; k < w && good; k++) {
+        const col = ox + c + k;
+        if (g[oy + 16][col] === E || blocked.has(col + "," + (oy + 15))) good = false;
+        for (let r = top; r <= 15 && good; r++) if (g[oy + r][col] !== E) good = false;
+      }
+      if (good) spots.push(c);
+    }
+    return spots.length ? spots[R.int(0, spots.length - 1)] : -1;
+  }
+  /** Keep creature spawns and doorway arrivals clear of a twist. */
+  const nearArrival = (cx, c0, c1) => cx.arrivals.some(a => a && a.some(p => {
+    const c = p.x / T, r = p.y / T;
+    return c >= cx.ox + c0 - 3 && c <= cx.ox + c1 + 3 && r > cx.oy && r <= cx.oy + 17;
+  }));
+
+  /**
+   * REGION TWISTS — each region's signature terrain, added to open cells
+   * (never to gates or puzzles, so they can't bypass a power the path needs):
+   * tidal water in the ruins, bounce mushrooms in the wilds, steam vents and
+   * conveyors in the ironworks, ice and gusts on Frostpeak, updrafts in the
+   * sky. Most carry a bonus gem up high to reward using them.
+   */
+  function twist(cx) {
+    const { cell, room, put, R, g, ox, oy } = cx;
+    if (room.kind === "start" || room.kind === "shrine") return;
+    // "calm" cells have no hazards on the floor; "safe" cells are anything that
+    // is not a gate, a puzzle or a power trial
+    const open = cell.content === "plain" || cell.content === "creatures" || (cell.content === "treasure" && cell.run === "creatures");
+    const calm = open || cell.content === "shaft";
+    const safe = calm || cell.content === "treasure" || cell.content === "simple";
+    const gem = (c, r) => put({ type: "gem", x: (ox + c) * T + 7, y: (oy + r) * T + 7 });
+    const Rt = rng(cell.seed ^ 0x7a11);
+    switch (room.region) {
+      case 1: {                                         // Sunken Ruins: the tide rises and falls
+        if (!calm || !Rt.chance(0.6)) return;
+        // pools only over solid floor (never across a pit or a link hole)
+        const period = Rt.pick([9, 11, 13]), phase = Rt() * 10;
+        let run0 = -1;
+        for (let c = 5; c <= 27; c++) {
+          const floor = c <= 26 && g[oy + 16][ox + c] !== E && g[oy + 15][ox + c] === E;
+          if (floor && run0 < 0) run0 = c;
+          if (!floor && run0 >= 0) {
+            if (c - run0 >= 5) put({ type: "water", x: (ox + run0) * T, y: (oy + 14) * T, w: (c - run0) * T, h: 2 * T, tide: 2 * T, period, phase });
+            run0 = -1;
+          }
+        }
+        const lc = Rt.int(12, 19);
+        if (g[oy + 10][ox + lc] === E && g[oy + 10][ox + lc + 2] === E && g[oy + 11][ox + lc + 1] === E) { cx.fillG(ox + lc, oy + 10, ox + lc + 2, oy + 10, OW); gem(lc + 1, 9); }
+        break;
+      }
+      case 2: {                                         // Verdant Wilds: bounce mushrooms
+        if (!safe || !Rt.chance(0.6)) return;
+        const c = flatSpot(cx, 2, 5, 4, 27);
+        if (c < 0 || nearArrival(cx, c, c + 1)) return;
+        put({ type: "bouncer", x: (ox + c) * T, y: (oy + 16) * T - 18 });
+        markBlocked(cx, c, c + 1, 10, 15);
+        const pc = Math.max(3, Math.min(26, c - 1));
+        if (g[oy + 10][ox + pc] === E && g[oy + 10][ox + pc + 3] === E) { cx.fillG(ox + pc, oy + 10, ox + pc + 3, oy + 10, OW); gem(pc + 1, 9); gem(pc + 2, 9); }
+        break;
+      }
+      case 3: {                                         // The Ironworks: steam vents and conveyor belts
+        if (!safe) return;
+        if (Rt.chance(0.55)) {
+          const c = flatSpot(cx, 2, 6, 4, 27);
+          if (c >= 0 && !nearArrival(cx, c, c + 1)) {
+            put({ type: "updraft", x: (ox + c) * T, y: (oy + 9) * T, w: 2 * T, h: 7 * T, steam: true, period: 3, on: 1.5, phase: Rt() * 3, maxUp: 360 });
+            markBlocked(cx, c, c + 1, 9, 15);
+            if (g[oy + 7][ox + c] === E && g[oy + 7][ox + c + 1] === E) gem(c, 7);
+          }
+        }
+        if (open && Rt.chance(0.5)) {                   // a belt along bare floor
+          const dir = Rt.chance(0.5) ? 5 : 4;
+          for (let c = 6; c <= 25; c++) if (g[oy + 16][ox + c] === G && g[oy + 15][ox + c] === E) g[oy + 16][ox + c] = dir;
+        }
+        break;
+      }
+      case 4: {                                         // Frostpeak: slick ice and mountain gusts
+        if (calm) {
+          for (let c = 1; c < CW - 1; c++) for (let r = 2; r <= 16; r++) {
+            const t0 = g[oy + r][ox + c];
+            if ((t0 === G || t0 === S) && g[oy + r - 1][ox + c] === E && Rt.chance(0.7)) g[oy + r][ox + c] = 3;
+          }
+        }
+        if (calm && Rt.chance(0.45)) {
+          put({ type: "wind", x: (ox + 3) * T, y: (oy + 3) * T, w: 26 * T, h: 13 * T, dir: Rt.chance(0.5) ? 1 : -1, push: 240, period: Rt.pick([4, 5]), blow: 1.6, phase: Rt() * 4 });
+        }
+        break;
+      }
+      case 6: {                                         // Sky Isles: constant updrafts
+        if (!safe || !Rt.chance(0.55)) return;
+        const c = flatSpot(cx, 2, 5, 4, 27);
+        if (c < 0 || nearArrival(cx, c, c + 1)) return;
+        put({ type: "updraft", x: (ox + c) * T, y: (oy + 6) * T, w: 2 * T, h: 10 * T, maxUp: 300, lift: 2400 });
+        markBlocked(cx, c, c + 1, 6, 15);
+        if (g[oy + 5][ox + c] === E) gem(c, 5);
+        break;
+      }
+    }
+  }
 
   const CHUNK = {
     /* ---- plain ground with mounds and a floating perch -------------- */
@@ -621,7 +783,11 @@
       // the hoard: a little altar of gems and a story tablet
       const c = closed === "R" ? 28 : 3;
       block(cx, c - 1, 15, c + 1, 15, S);
-      for (let k = -1; k <= 1; k++) put({ type: "gem", x: (cx.ox + c + k) * T + 7, y: (cx.oy + 12 - (k === 0 ? 1 : 0)) * T + 7 });
+      const up = cx.upgrade;
+      for (let k = -1; k <= 1; k++) {
+        if (k === 0 && up) { put({ type: "upgrade", kind: up.kind, uid: up.uid, x: (cx.ox + c) * T + 5, y: (cx.oy + 11) * T + 5 }); continue; }
+        put({ type: "gem", x: (cx.ox + c + k) * T + 7, y: (cx.oy + 12 - (k === 0 ? 1 : 0)) * T + 7 });
+      }
       const lore = LORE[(cell.seed >>> 3) % LORE.length];
       put({ type: "lore", x: (cx.ox + (closed === "R" ? c - 3 : c + 3)) * T, y: floorY(cx, 30), lines: lore });
       markBlocked(cx, c - 1, c + 1, 12, 15);
@@ -631,7 +797,7 @@
       const { put } = cx;
       block(cx, 20, 14, 23, 15, G); block(cx, 19, 15, 19, 15, G);
       put({ type: "tutor", x: (cx.ox + 9) * T, y: (cx.oy + 9) * T, title: "ECHOES OF AETHER", lines: [
-        "The world is one — explore it TOGETHER.",
+        "The world is one, explore it TOGETHER.",
         "Doorways need BOTH heroes standing in them.",
         "Press M for the map. Fill it to 100% to finish.",
       ], keys: [["WASD", "Nichols"], ["◄▲▼►", "Nibihah"]] });
@@ -640,17 +806,33 @@
         "S / ▼ pulls levers.  F and / drop a ping.",
       ] });
       put({ type: "lore", x: (cx.ox + 15) * T, y: floorY(cx, 30), lines: ["Two halves of one compass.", "Find the shrines. Wake the Heart."] });
+      put({ type: "merchant", region: 0, x: (cx.ox + 27) * T, y: floorY(cx, 30) });
     },
     /* ---- power shrine ------------------------------------------------ */
     shrine(cx) {
-      const { put, room } = cx;
+      const { put, room, ch } = cx;
       const P = POWERS[room.power];
-      block(cx, 11, 15, 20, 15, S);
-      block(cx, 9, 3, 10, 10, S); block(cx, 21, 3, 22, 10, S);   // columns (walk beneath)
-      block(cx, 9, 1, 22, 2, S);
-      put({ type: "shrine", x: (cx.ox + 15) * T, y: (cx.oy + 13) * T, power: room.power, label: P.name, glyph: P.glyph, tint: P.tint });
-      put({ type: "lore", x: (cx.ox + 5) * T, y: floorY(cx, 30), lines: cx.reg.lore });
-      markBlocked(cx, 8, 23, 1, 15);
+      const door = room.doors[0], side = door ? door.side : "L";
+      const gateCol = side === "L" ? 3 : 28;
+      const floor = (cx.oy + 16) * T;
+      // THE GUARDIAN'S ARENA: the doorway seals while it's awake
+      gate(cx, gateCol, { channel: ch("fight"), invert: true, color: "red" });
+      block(cx, 6, 13, 8, 13, OW); block(cx, 23, 13, 25, 13, OW);        // perches to dodge from
+      const G = GG.GUARDIANS ? GG.GUARDIANS[room.region] : { h: 64, w: 56 };
+      const gx = side === "L" ? 21 : 8;
+      const guard = put({ type: "guardian", region: room.region, x: (cx.ox + gx) * T, y: floor - G.h - 1,
+        floorY: floor, ax0: (cx.ox + 4) * T, ax1: (cx.ox + 28) * T, hoverY: (cx.oy + 6) * T, tough: 1 });
+      const inCol = side === "L" ? 5 : 25;
+      put({ type: "arena", x: (cx.ox + 4) * T, y: (cx.oy + 1) * T, w: 24 * T, h: 15 * T, members: [guard.id],
+        channel: ch("fight"), doneChannel: ch("won"), boss: true, inX: (cx.ox + inCol) * T, inY: floor });
+      put({ type: "shrine", x: (cx.ox + 15) * T, y: (cx.oy + 14) * T, power: room.power, label: P.name, glyph: P.glyph, tint: P.tint,
+        guardCh: ch("won"), escCh: ch("esc") });
+      // …claiming the power wakes the region: RUN
+      put({ type: "escape", region: room.region, doorSide: side, channel: ch("esc"), floorY: floor, startX: (cx.ox + 15) * T });
+      // once it's safe, the travelling merchant sets up shop by the door
+      put({ type: "merchant", region: room.region, x: (cx.ox + (side === "L" ? 7 : 24)) * T, y: floor - 30, guardCh: ch("won") });
+      put({ type: "lore", x: (cx.ox + (side === "L" ? 26 : 5)) * T, y: floorY(cx, 30), lines: cx.reg.lore });
+      markBlocked(cx, 3, 28, 1, 15);
     },
     /* ---- climbing shaft (cell links upward) ------------------------- */
     shaft(cx) {
@@ -941,6 +1123,31 @@
       put({ type: "telecube", x: (cx.ox + 26) * T, y: floorY(cx, T), kind: "free" });
       markBlocked(cx, 5, 26, 10, 11); markBlocked(cx, 5, 5, 15, 15); markBlocked(cx, 26, 26, 15, 15);
     },
+    /* ---- sunbeams: turn the mirrors, light the sun crystals ----------- */
+    sunbeam(cx) {
+      const { put, ch } = cx;
+      gate(cx, 15, { need: [[ch("sL"), ch("sR")]], color: "gold" });
+      // each side: a sun-window in the roof, a turning mirror at head height,
+      // a stone post the beam hits if the mirror faces the wrong way, and the
+      // sun crystal by the wall. EITHER crystal opens the gate.
+      for (const [mc, post, rc, wrong, chn] of [[8, 11, 3, "\\", "sL"], [23, 20, 28, "/", "sR"]]) {
+        block(cx, mc, 1, mc, 1, S);
+        put({ type: "laser", x: (cx.ox + mc) * T, y: (cx.oy + 2) * T, dir: "down", light: true });
+        const m = put({ type: "mirror", x: (cx.ox + mc) * T, y: (cx.oy + 14) * T, orient: wrong, rotatable: true });
+        block(cx, post, 14, post, 15, S);
+        put({ type: "receiver", x: (cx.ox + rc) * T, y: (cx.oy + 14) * T, channel: ch(chn), via: m.id });
+        markBlocked(cx, Math.min(mc, rc) - 1, Math.max(mc, rc) + 1, 12, 15);
+      }
+    },
+    /* ---- heartbeat stones: platforms that pulse with the Heart --------- */
+    heartbeat(cx) {
+      const { put } = cx;
+      decorateCeiling(cx, 1);
+      spikes(cx, 7, 24);
+      block(cx, 5, 14, 6, 14, OW); block(cx, 25, 14, 26, 14, OW);
+      const cols = [8, 12, 16, 20];
+      cols.forEach((c, k) => put({ type: "blink", x: (cx.ox + c) * T, y: (cx.oy + 14) * T, w: 2 * T, h: 14, period: 2.6, duty: 0.62, phase: k * 0.65, sync: true, heart: true }));
+    },
     /* ---- gates: seal a doorway until the heroes own a power ---------- */
     gate(cx) {
       const { put, ch, cell } = cx;
@@ -993,6 +1200,39 @@
     },
   };
 
+  /**
+   * Hidden upgrades, storytellers and thief sightings, decided once for the
+   * whole world: per region, the first dead-end hoard hides a HEART CRYSTAL
+   * and the second an ENERGY CELL; every hidden vault holds one more.
+   */
+  function planExtras(world) {
+    const upg = {}, room = {}, list = [];
+    const add = (rid, e) => (room[rid] = room[rid] || []).push(e);
+    REGIONS.forEach((reg, k) => {
+      const rooms = world.rooms.filter(r => r.region === k && r.kind === "normal");
+      const hoards = [];
+      for (const r of rooms) for (const c of r.cells) if (c.content === "treasure") hoards.push([r, c]);
+      ["heart", "energy"].forEach((kind, n) => {
+        const h = hoards[n * 3 % Math.max(1, hoards.length)];
+        if (!h || upg[h[0].id + ":" + h[1].i + "," + h[1].j]) return;
+        const uid = "u" + h[0].id + "_" + h[1].i + "_" + h[1].j;
+        upg[h[0].id + ":" + h[1].i + "," + h[1].j] = { kind, uid }; list.push({ uid, kind, room: h[0].id, region: k });
+      });
+      // a storyteller in the region's first open room, the thief two rooms on
+      const talkers = rooms.filter(r => r.cells.some(c => ["plain", "creatures", "treasure", "simple", "shaft"].includes(c.content)));
+      if (talkers[0]) { const c = talkers[0].cells.find(c => ["plain", "creatures", "treasure", "simple", "shaft"].includes(c.content)); add(talkers[0].id, { what: "npc", i: c.i, j: c.j }); }
+      if (k > 0 && talkers[2]) { const c = talkers[2].cells[talkers[2].cells.length - 1]; add(talkers[2].id, { what: "thief", i: c.i, j: c.j, uid: "t" + talkers[2].id }); }
+    });
+    let b = 0;
+    for (const r of world.rooms) if (r.kind === "bonus") {
+      const kind = b++ % 2 ? "energy" : "heart";
+      const c = r.cells[r.cells.length - 1], uid = "v" + r.id;
+      add(r.id, { what: "upgrade", kind, uid, i: c.i, j: c.j });
+      list.push({ uid, kind, room: r.id, region: r.region });
+    }
+    return { upg, room, list };
+  }
+
   /* =====================================================================
    * PUBLIC API
    * =================================================================== */
@@ -1011,6 +1251,17 @@
     world.cells = [];
     for (const r of world.rooms) for (let j = 0; j < r.h; j++) for (let i = 0; i < r.w; i++) world.cells.push({ room: r.id, x: r.x + i, y: r.y + j, key: (r.x + i) + "," + (r.y + j) });
     world.totalCells = world.cells.length;
+    // one giant landmark per region, at the middle of its cells
+    const LM = [["crystal", "rgba(90,150,210,0.30)"], ["tower", "rgba(40,90,100,0.40)"], ["tree", "rgba(30,70,30,0.42)"],
+      ["chimney", "rgba(60,30,30,0.45)"], ["peak", "rgba(120,150,190,0.40)"], ["ziggurat", "rgba(90,60,30,0.42)"],
+      ["citadel", "rgba(110,120,190,0.35)"], ["heart", "rgba(40,16,70,0.55)"]];
+    world.landmarks = REGIONS.map((reg, k) => {
+      let sx = 0, sy = 0, n = 0;
+      for (const r of world.rooms) if (r.region === k) { sx += r.x + r.w / 2; sy += r.y + r.h / 2; n++; }
+      if (!n) return null;
+      return { kind: LM[k][0], col: LM[k][1], wx: (sx / n) * CW * T, wy: (sy / n) * CH * T };
+    });
+    world.extras = planExtras(world);
     world._defs = new Map();
     world.def = (id) => { if (!world._defs.has(id)) world._defs.set(id, buildRoom(world, id)); return world._defs.get(id); };
     cached = world;
@@ -1022,7 +1273,8 @@
   function testRoom(content, o) {
     o = o || {};
     const dummy = { id: 1, region: 0, kind: "normal", x: 0, y: 0, w: 1, h: 1, doors: [] };
-    const room = { id: 0, region: o.region || 0, kind: "normal", x: 0, y: 0, w: 1, h: 1, doors: [], vlinks: new Set(), noVert: new Set(), tier: o.tier || 0, gems: 0 };
+    const room = { id: 0, region: o.region || 0, kind: "normal", x: 0, y: 0, w: 1, h: 1, doors: [], vlinks: new Set(), noVert: new Set(), tier: o.tier || 0, gems: 0,
+                   power: o.power || POWER_ORDER[o.region || 0] };
     room.doors.push({ lx: 0, ly: 0, side: "L", to: 1, lock: o.gateSide === "L" ? o.gatePower : null, host: o.gateSide === "L" });
     room.doors.push({ lx: 0, ly: 0, side: "R", to: 1, lock: o.gateSide === "R" ? o.gatePower : null, host: o.gateSide === "R" });
     const f = cellFlags(room, 0, 0);

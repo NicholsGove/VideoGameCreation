@@ -1819,7 +1819,7 @@
       ({ type: "tutor", x: tx * T, y: ty * T, title, lines, keys: keys || [] });
     const TUT = {
       1: [sign(6, 14, "WELCOME, HEROES", [
-        "Move and jump — and mind the spikes.",
+        "Move and jump, and mind the spikes.",
         "BOTH of you must stand in the portal to finish.",
       ], [["WASD", "Nichols"], ["◄▲▼►", "Nibihah"]])],
       2: [sign(6, 14, "TIMED GATES", [
@@ -1829,10 +1829,10 @@
       4: [sign(13, 18, "WALL JUMP", [
         "Fall while pressing INTO a wall to slide down it.",
         "Press JUMP to kick off. Bounce wall-to-wall to climb",
-        "the sealed chimney — the key waits at the top.",
+        "the sealed chimney. The key waits at the top.",
       ], [["W / ▲", "jump off the wall"]])],
       6: [sign(7, 27, "CLIMB TOGETHER", [
-        "Stand on your partner's head to reach higher —",
+        "Stand on your partner's head to reach higher",
         "the carrier jumps lower under the weight.",
       ])],
       7: [sign(8, 13, "CARRY & THROW", [
@@ -1850,12 +1850,12 @@
       ], [["R-Shift", "hook / unhook"], ["▲/▼", "reel the rope"]])],
       15: [sign(9, 14, "TELEKINESIS", [
         "Nichols: press Q near the glowing stone to grip it",
-        "with your MIND. Steer it with WASD — but you are",
+        "with your MIND. Steer it with WASD, but you are",
         "rooted while holding. Q again lets go; it floats.",
       ], [["Q", "grip / release"]])],
-      22: [sign(15, 14, "VERMIN — TO ARMS!", [
+      22: [sign(15, 14, "VERMIN. TO ARMS!", [
         "Corruption-rats hunt you while healthy and flee",
-        "when wounded. FOUR hits fell one — for good.",
+        "when wounded. FOUR hits fell one, for good.",
       ], [["E", "Nichols' bolt gun"], [". ", "Nibihah's bow"]])],
       26: [sign(11, 14, "RUNE SONGS", [
         "Step the numbered runes IN ORDER. A wrong step",
@@ -1863,7 +1863,7 @@
       ])],
       29: [sign(6, 14, "THE GALE", [
         "When the wind howls, CROUCH on the ground to brace.",
-        "Move between gusts — or be swept into the thorns.",
+        "Move between gusts, or be swept into the thorns.",
       ], [["S / ▼", "brace"]])],
       32: [sign(9, 14, "TANDEM PLATES", [
         "Twin plates linked by one breath: both must be",
@@ -1871,18 +1871,18 @@
       ])],
       33: [sign(10, 14, "THE TETHER", [
         "In here an aether thread binds you. Drift too far",
-        "apart and it SNAPS — move at each other's pace.",
+        "apart and it SNAPS, move at each other's pace.",
       ])],
       41: [sign(8, 14, "COUNTERWEIGHTS", [
-        "The scales weigh you. Nichols is heavier — his pan",
+        "The scales weigh you. Nichols is heavier, his pan",
         "sinks, and the other rises. Ride it like a lift.",
       ])],
       46: [sign(10, 14, "POWER CELLS", [
-        "Press ACTION beside a cell to lift it — one each.",
+        "Press ACTION beside a cell to lift it, one each.",
         "Set it in a cradle to power the locks forever.",
       ], [["S / ▼", "lift / set down"]])],
       51: [sign(8, 14, "THE WATCHERS", [
-        "When the eye burns violet it SEES — and its gaze",
+        "When the eye burns violet it SEES, and its gaze",
         "wakes the lasers. Move in the dark beats.",
       ])],
       53: [sign(6, 14, "LURING", [
@@ -1890,7 +1890,7 @@
         "plate and hold its attention there. Don't get caught.",
       ])],
       70: [sign(23, 18, "THE CELESTIAL", [
-        "Shoot it — 40 bolts bring it down. Break its three",
+        "Shoot it. 40 bolts bring it down. Break its three",
         "seals to stun it. At half strength it starts BLINKING",
         "across the arena. Stone shelters you from starfire.",
       ], [["E", "bolt gun"], [". ", "bow"]])],

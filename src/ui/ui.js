@@ -34,7 +34,7 @@
 
       // Keyboard navigation for whichever menu panel is open.
       window.addEventListener("keydown", (e) => {
-        if (GG.game.state !== "menu" || !this._navState) return;
+        if (!(GG.game.state === "menu" || GG.game.state === "paused" || this._shopOpen) || !this._navState) return;
         if (!this.menuLayer.querySelector(".menu")) return;
         if (document.activeElement && document.activeElement.tagName === "INPUT") return;
         if (e.code === "ArrowDown" || e.code === "KeyS") { this._navState.move(1); e.preventDefault(); }
@@ -43,7 +43,7 @@
       });
       // Gamepad menu navigation (polled from the input manager).
       GG.bus.on("pad:menu", (d) => {
-        if (GG.game.state !== "menu" || !this._navState || !this.menuLayer.querySelector(".menu")) return;
+        if (!(GG.game.state === "menu" || GG.game.state === "paused" || this._shopOpen) || !this._navState || !this.menuLayer.querySelector(".menu")) return;
         if (d === "down") this._navState.move(1);
         else if (d === "up") this._navState.move(-1);
         else if (d === "confirm") this._navState.activate();
@@ -73,8 +73,10 @@
     // ---- Main menu -------------------------------------------------------
     showMainMenu() {
       this.hideHUD();
-      const hasJourney = GG.world.hasSave();
-      const sum = hasJourney ? GG.world.savedSummary() : null;
+      const last = GG.save.data.lastSlot || 1;
+      GG.world.useSlot(last);
+      const hasJourney = GG.world.hasSave(last);
+      const sum = hasJourney ? GG.world.savedSummary(last) : null;
       const btn = (a, cls, ico, title, sub, dis) =>
         `<button class="btn ${cls} nav" data-a="${a}" ${dis ? "disabled" : ""}><span class="ico">${ico}</span><span class="label">${title}${sub ? `<span class="sub">${sub}</span>` : ""}</span></button>`;
       const sbtn = (a, cls, ico, title) =>
@@ -83,9 +85,9 @@
         <div class="menu menu-right">
           <p class="tagline" style="margin-top:2px;">One world. Two heroes. Discover it all — together.<br><span class="badge p1">Nichols</span> &amp; <span class="badge p2">Nibihah</span></p>
           ${hasJourney
-            ? btn("continue", "primary", "⏳", "Continue Journey", `${sum ? sum.pct.toFixed(1) + "% discovered · " + sum.region + " · " + U.formatTime(sum.timeMs).split(".")[0] : "Resume where you left off"}`)
+            ? btn("continue", "primary", "⏳", "Continue Journey", `Slot ${last} · ${sum ? sum.pct.toFixed(1) + "% discovered · " + sum.region + " · " + U.formatTime(sum.timeMs).split(".")[0] : "Resume where you left off"}`)
             : ""}
-          ${btn("journey", hasJourney ? "" : "primary", "🗺", hasJourney ? "New Journey" : "Begin the Journey", "Explore the open world · local co-op")}
+          ${btn("journey", hasJourney ? "" : "primary", "🗺", hasJourney ? "Journeys" : "Begin the Journey", "3 save slots · explore the open world · local co-op")}
           ${btn("online", "", "🌐", "Online Co-op", "Host or join · P1 = WASD, P2 = arrows")}
           ${btn("classic", "", "📜", "Classic Levels", "The original 70 puzzle levels")}
           <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap;">
@@ -96,12 +98,8 @@
             ${sbtn("quit", "danger", "🚪", "Quit")}
           </div>
         </div>`);
-      click(node, '[data-a="continue"]', () => { this.savingIndicator("Journey loaded"); this.transition(() => GG.game.startWorld(false)); });
-      click(node, '[data-a="journey"]', () => {
-        if (hasJourney) this.showConfirm("Start a new journey?", "Your current map and powers will be lost.", () =>
-          this.transition(() => GG.game.playCutscene("prologue", () => GG.game.startWorld(true))), () => this.showMainMenu());
-        else this.transition(() => GG.game.playCutscene("prologue", () => GG.game.startWorld(true)));
-      });
+      click(node, '[data-a="continue"]', () => { GG.world.useSlot(last); this.savingIndicator("Journey loaded"); this.transition(() => GG.game.startWorld(false)); });
+      click(node, '[data-a="journey"]', () => this.showSlots());
       click(node, '[data-a="classic"]', () => this.showClassic());
       click(node, '[data-a="online"]', () => this.showOnline());
       click(node, '[data-a="achv"]', () => this.showAchievements());
@@ -130,6 +128,105 @@
       click(node, '[data-a="continue"]', () => { if (hasSave) this.transition(() => GG.game.startLocal(Math.min(GG.save.data.unlockedLevel, GG.LEVEL_COUNT))); });
       click(node, '[data-a="levels"]', () => this.showLevelSelect("local"));
       click(node, '[data-a="back"]', () => this.showMainMenu());
+      this._set(node); this._bindNav(node);
+    },
+
+    /** Three journeys side by side (so different pairs can each keep one). */
+    showSlots() {
+      const rows = [1, 2, 3].map(n => {
+        const inf = GG.world.slotInfo(n);
+        const desc = inf ? `${inf.done ? "Completed ✦ " : ""}${inf.pct.toFixed(1)}% · ${inf.powers}/8 powers · ${inf.region} · ${U.formatTime(inf.timeMs).split(".")[0]}${inf.ng ? " · NG+" + inf.ng : ""}` : "Empty";
+        return `<div class="row" style="gap:6px;align-items:stretch;">
+          <button class="btn nav ${inf && !inf.done ? "primary" : ""}" style="flex:1" data-a="${inf && !inf.done ? "play" : "new"}" data-slot="${n}"><span class="ico">${inf ? "⏳" : "✦"}</span><span class="label">Slot ${n}<span class="sub">${desc}</span></span></button>
+          ${inf ? `<button class="btn small nav" data-a="new" data-slot="${n}" title="Start over in this slot">New</button><button class="btn small danger nav" data-a="erase" data-slot="${n}">Erase</button>` : ""}
+        </div>`;
+      }).join("");
+      const node = el(`
+        <div class="menu">
+          <h2>🗺 Journeys</h2>
+          <p class="tagline">Each slot is its own world, map and wardrobe.</p>
+          ${rows}
+          <div class="back-row"><button class="btn nav" data-a="back">Back</button></div>
+        </div>`);
+      const start = (n, fresh) => {
+        GG.world.useSlot(n); GG.save.data.lastSlot = n; GG.save.save();
+        if (fresh) this.transition(() => GG.game.playCutscene("prologue", () => GG.game.startWorld(true)));
+        else { this.savingIndicator("Journey loaded"); this.transition(() => GG.game.startWorld(false)); }
+      };
+      click(node, '[data-a="play"]', (e, b) => start(+b.dataset.slot, false));
+      click(node, '[data-a="new"]', (e, b) => {
+        const n = +b.dataset.slot;
+        if (GG.world.slotInfo(n) && !GG.world.slotInfo(n).done) this.showConfirm("Start over in slot " + n + "?", "That journey's map and powers will be lost.", () => start(n, true), () => this.showSlots());
+        else start(n, true);
+      });
+      click(node, '[data-a="erase"]', (e, b) => {
+        const n = +b.dataset.slot;
+        this.showConfirm("Erase slot " + n + "?", "This can't be undone.", () => { GG.world.wipe(n); this.showSlots(); }, () => this.showSlots());
+      });
+      click(node, '[data-a="back"]', () => this.showMainMenu());
+      this._set(node); this._bindNav(node);
+    },
+
+    /** The travelling merchant: maps, perks and outfits for gems. */
+    showShop() {
+      const W = GG.world, st = W.state, WG = GG.WORLDGEN;
+      this._shopOpen = true;
+      const region = W.room.region, reg = WG.REGIONS[region];
+      const price = (n) => `<b>${n}</b> ◆`;
+      const who = ["nobody", "Nichols", "Nibihah", "both"];
+      const wearOf = (id) => { const w = st.outfits.wear; const a = w[0] === id, b = w[1] === id; return a && b ? 3 : a ? 1 : b ? 2 : 0; };
+      const items = [];
+      items.push({ id: "map", label: `Map of ${reg.name}`, sub: st.reveal[region] ? "Bought · every room outlined" : "Outlines every room in this region", cost: st.reveal[region] ? 0 : 12, own: !!st.reveal[region] });
+      for (const [id, P] of Object.entries(GG.PERKS)) items.push({ id: "perk:" + id, label: P.name, sub: P.desc, cost: P.price, own: !!st.perks[id] });
+      for (const [id, O] of Object.entries(GG.OUTFITS)) {
+        const own = !!st.outfits.owned[id];
+        items.push({ id: "fit:" + id, label: O.name, sub: own ? "Worn by " + who[wearOf(id)] + " · press to change" : "An outfit for either hero", cost: O.price, own, fit: true });
+      }
+      const node = el(`
+        <div class="menu shop">
+          <h2>🎒 Pell the Merchant</h2>
+          <p class="tagline">"Gems for goods, friends." · You have <b style="color:#ffcf4d">${W.wallet} ◆</b></p>
+          <div class="shop-list" style="max-height:330px;overflow:auto;">
+            ${items.map(it => `<button class="btn nav ${it.own && !it.fit ? "" : ""}" data-it="${it.id}" ${it.own && !it.fit ? "disabled" : ""} style="width:100%;justify-content:space-between;">
+              <span class="label">${it.label}<span class="sub">${it.sub}</span></span><span>${it.own ? (it.fit ? "👕" : "✓") : price(it.cost)}</span></button>`).join("")}
+          </div>
+          <div class="back-row"><button class="btn nav" data-a="close">Leave the shop</button></div>
+        </div>`);
+      click(node, "[data-it]", (e, b) => {
+        const id = b.dataset.it, it = items.find(x => x.id === id);
+        if (it.fit && it.own) {                                // cycle who wears it
+          const fid = id.slice(4); const cur = wearOf(fid), next = (cur + 1) % 4;
+          st.outfits.wear = st.outfits.wear.map((w, i) => w === fid ? null : w);
+          if (next === 1 || next === 3) st.outfits.wear[0] = fid;
+          if (next === 2 || next === 3) st.outfits.wear[1] = fid;
+          W.persist(); if (GG.game.level) W.applyPowers(GG.game.level);
+          GG.bus.emit("ui:confirm"); return this.showShop();
+        }
+        if (!W.buy(it.cost)) { GG.bus.emit("ui:error"); this.toast("Not enough gems", `${it.label} costs ${it.cost} ◆`); return; }
+        if (id === "map") st.reveal[region] = 1;
+        else if (id.startsWith("perk:")) st.perks[id.slice(5)] = 1;
+        else if (id.startsWith("fit:")) { st.outfits.owned[id.slice(4)] = 1; }
+        W.persist(); if (GG.game.level) W.applyPowers(GG.game.level);
+        GG.bus.emit("ui:confirm"); GG.bus.emit("shop:bought", { id });
+        GG.game._broadcastRoom({ update: true });
+        this.showShop();
+      });
+      click(node, '[data-a="close"]', () => { this._shopOpen = false; GG.game.resume(); });
+      this._set(node); this._bindNav(node);
+    },
+
+    /** Fast travel: pick a shrine you've already made safe. */
+    showFastTravel() {
+      const spots = GG.world.travelSpots().filter(s => s.room !== GG.world.state.room);
+      const node = el(`
+        <div class="menu pause-tablet">
+          <h2>✦ Fast Travel</h2>
+          <p class="tagline">Both heroes travel together.</p>
+          ${spots.length ? spots.map(s => `<button class="btn nav" data-room="${s.room}" data-door="${s.door}"><span class="ico">✦</span><span class="label">${s.name}<span class="sub">${GG.WORLDGEN.REGIONS[GG.world.world.rooms[s.room].region].name}</span></span></button>`).join("") : `<p class="hint">No other shrines are safe yet. Beat a guardian to open its shrine.</p>`}
+          <div class="back-row"><button class="btn nav" data-a="back">Back</button></div>
+        </div>`);
+      click(node, "[data-room]", (e, b) => GG.game.fastTravel(+b.dataset.room, +b.dataset.door));
+      click(node, '[data-a="back"]', () => this.showPause());
       this._set(node); this._bindNav(node);
     },
 
@@ -174,17 +271,23 @@
       const node = el(`
         <div class="menu">
           <h1>The Heart Beats Again</h1>
-          <p class="tagline">Every corner of the world discovered — 100%.<br>Nichols and Nibihah restored the Heart of Aether together.</p>
+          <p class="tagline">Every corner of the world discovered: 100%.<br>Nichols and Nibihah restored the Heart of Aether together.</p>
           <div class="field"><label>Journey time</label><span>${U.formatTime(st.timeMs || 0).split(".")[0]}</span></div>
           <div class="field"><label>Powers found</label><span>${st.powers || 8} / 8</span></div>
           <div class="field"><label>Creatures bested</label><span>${st.slain || 0}</span></div>
           <div class="field"><label>Gems gathered</label><span>${st.gems || 0} 💎</span></div>
           <div class="field"><label>Falls</label><span>${st.deaths || 0}</span></div>
-          <p class="center" style="margin-top:12px;"><span class="badge ok">✦ THE END ✦ — thank you for playing</span></p>
+          <div class="field"><label>Co-op combos</label><span>${st.combos || 0}</span></div>
+          <div class="field"><label>Hidden upgrades</label><span>${st.upgrades || 0}</span></div>
+          ${st.best ? '<p class="center"><span class="badge ok">New best journey time!</span></p>' : ""}
+          ${st.splits && Object.keys(st.splits).length ? `<div class="hint" style="margin-top:6px;">Splits: ${GG.WORLDGEN.POWER_ORDER.filter(p => st.splits[p] != null).map(p => GG.WORLDGEN.POWERS[p].glyph + " " + U.formatTime(st.splits[p]).split(".")[0]).join(" · ")}</div>` : ""}
+          <p class="center" style="margin-top:12px;"><span class="badge ok">✦ THE END ✦ thank you for playing</span></p>
           <div class="row" style="gap:8px;margin-top:12px;justify-content:center;">
-            <button class="btn primary nav" data-a="menu">Return to title</button>
+            <button class="btn primary nav" data-a="ng"><span class="ico">✦</span><span class="label">New Game+${st.ng ? " " + (st.ng + 1) : ""}<span class="sub">tougher beasts · faster traps · keep your outfits</span></span></button>
+            <button class="btn nav" data-a="menu">Return to title</button>
           </div>
         </div>`);
+      click(node, '[data-a="ng"]', () => this.transition(() => GG.game.startWorld(true, { ng: true })));
       click(node, '[data-a="menu"]', () => this.transition(() => GG.game.toMenu()));
       this._set(node); this._bindNav(node);
     },
@@ -237,14 +340,19 @@
             <b>Nichols</b> (green) — immune to <span class="badge p1">electricity</span>, pushes heavy objects, repairs machines, activates GREEN mechanisms.<br>
             <b>Nibihah</b> (blue) — immune to <span class="badge p2">poison</span>, double-jumps, fits through narrow passages, activates BLUE mechanisms.<br><br>
             <b>Cooperative physics:</b> stand on each other's heads, jump off a partner to reach higher ledges, and push one another. Wall-slide down tall walls; drop through one-way platforms by holding <span class="kbd">↓</span>.<br><br>
-            <b>The Journey</b> is one connected world. Doorways only open when <b>both</b> heroes stand in them. Shrines grant new powers (double jump, dash, grapple…) that open sealed gates — go back and explore. Discover <b>100%</b> of the map (<span class="kbd">M</span>) to finish. <b>Gamepads</b> are auto-detected.
+            <b>The Journey</b> is one connected world. Doorways only open when <b>both</b> heroes stand in them. Shrines grant new powers (double jump, dash, grapple…) that open sealed gates — go back and explore. Discover <b>100%</b> of the map (<span class="kbd">M</span>) to finish. <b>Gamepads</b> are auto-detected.<br><br>
+            <b>Fighting:</b> each hero has hearts. A hit dazes a creature; if your PARTNER lands the next hit it's a <b>combo</b> (triple damage, bonus gems). Every shrine has a <b>guardian</b>: dodge its attack, then strike while it's dazed. Claiming a power sets off an <b>escape</b>, so run!
           </p>
           <div class="divider"></div>
           <div class="row between"><span>Player 1 (Nichols)</span><span><span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> / Pad 1</span></div>
           <div class="row between"><span>Player 2 (Nibihah)</span><span><span class="kbd">▲</span><span class="kbd">◄</span><span class="kbd">▼</span><span class="kbd">►</span> / Pad 2</span></div>
           <div class="row between"><span>Special (grapple/tele · swing/dash)</span><span><span class="kbd">Q</span> · <span class="kbd">R-Shift</span></span></div>
           <div class="row between"><span>Attack (bolt gun · bow)</span><span><span class="kbd">E</span> · <span class="kbd">.</span></span></div>
+          <div class="row between"><span>Strike (close range)</span><span><span class="kbd">X</span> · <span class="kbd">,</span></span></div>
+          <div class="row between"><span>Dodge roll (on the ground)</span><span><span class="kbd">L-Shift</span> · <span class="kbd">R-Ctrl</span></span></div>
+          <div class="row between"><span>Talk · trade · toss your partner</span><span><span class="kbd">S</span> · <span class="kbd">▼</span></span></div>
           <div class="row between"><span>Ping a spot</span><span><span class="kbd">F</span> · <span class="kbd">/</span></span></div>
+          <div class="row between"><span>Hide / show tutorial tips</span><span><span class="kbd">H</span></span></div>
           <div class="row between"><span>World map</span><span><span class="kbd">M</span> / <span class="kbd">Tab</span></span></div>
           <div class="row between"><span>Pause · Restart</span><span><span class="kbd">Esc</span>/Start <span class="kbd">R</span></span></div>
           <div class="back-row"><button class="btn" data-a="back">Back</button></div>
@@ -458,21 +566,36 @@
               <option value="es" ${s.gameplay.language === "es" ? "selected" : ""}>Español</option>
               <option value="fr" ${s.gameplay.language === "fr" ? "selected" : ""}>Français</option>
             </select></div>
+          <div class="field"><label>Tutorial tips (H toggles in game)</label>
+            <select data-sel="tutorials">
+              <option value="smart" ${(s.gameplay.tutorials || "smart") === "smart" ? "selected" : ""}>Smart: open when a hero is near</option>
+              <option value="always" ${s.gameplay.tutorials === "always" ? "selected" : ""}>Always open</option>
+              <option value="off" ${s.gameplay.tutorials === "off" ? "selected" : ""}>Hidden</option>
+            </select></div>
           <div class="field"><label>Hold to restart (safety)</label><span data-t="holdToRestart" data-grp="gameplay">${tog(s.gameplay.holdToRestart)}</span></div>
+          <div class="field"><label>Assist mode (+2 hearts, slower traps)</label><span data-t="assist" data-grp="gameplay">${tog(s.gameplay.assist)}</span></div>
+          <div class="field"><label>Speedrun timer + splits</label><span data-t="speedrun" data-grp="gameplay">${tog(s.gameplay.speedrun)}</span></div>
+          <div class="field"><label>Controller rumble</label><span data-t="rumble" data-grp="gameplay">${tog(s.gameplay.rumble !== false)}</span></div>
           <div class="row" style="margin-top:14px;"><button class="btn small danger nav" data-a="reset"><span class="ico">🗑</span>Reset Save</button></div>`;
         wrap.querySelector('[data-sel="language"]').addEventListener("change", (e) => { s.gameplay.language = e.target.value; GG.save.saveSettings(); });
+        wrap.querySelector('[data-sel="tutorials"]').addEventListener("change", (e) => { s.gameplay.tutorials = e.target.value; GG.save.saveSettings(); });
         click(wrap, '[data-a="reset"]', () => { if (confirm("Erase all progress, times and achievements?")) { GG.save.resetAll(); this.toast("Save reset", "Fresh start"); } });
         wireToggles();
       } else if (t === "access") {
         wrap.innerHTML = `
           <div class="section-title">♿ Accessibility</div>
-          <div class="field"><label>Colourblind assist (icons + patterns)</label><span data-t="colorblind" data-grp="gameplay">${tog(s.gameplay.colorblind)}</span></div>
+          <div class="field"><label>Colourblind mode (safe palette, stripes, letters)</label><span data-t="colorblind" data-grp="gameplay">${tog(s.gameplay.colorblind)}</span></div>
           <div class="field"><label>Reduce screen shake</label><span data-t="shake">${tog(!s.graphics.shake ? true : false)}</span></div>
-          <p class="hint" style="margin-top:10px;">Two heroes are colour-coded (blue = Nichols, green = Nibihah). Assist mode adds icons so colours aren't the only cue.</p>`;
+          <div class="field"><label>Reduce flashing effects</label><span data-t="flash">${tog(s.graphics.flash === false)}</span></div>
+          <div class="field"><label>Assist mode (+2 hearts, slower traps)</label><span data-t="assist" data-grp="gameplay">${tog(s.gameplay.assist)}</span></div>
+          <p class="hint" style="margin-top:10px;">The heroes are colour-coded (green = Nichols, blue = Nibihah). Colourblind mode swaps to a palette that stays distinct, puts stripes on everything that hurts, and marks hero-only switches with N or B.</p>`;
         // the shake toggle here is inverted meaning "reduce"; wire specially
-        wrap.querySelectorAll('[data-t="colorblind"]').forEach(span => span.addEventListener("click", () => {
-          s.gameplay.colorblind = !s.gameplay.colorblind; span.querySelector(".toggle").classList.toggle("on"); GG.save.saveSettings(); GG.bus.emit("ui:click");
+        const flip = (sel, fn) => wrap.querySelectorAll(sel).forEach(span => span.addEventListener("click", () => {
+          fn(); span.querySelector(".toggle").classList.toggle("on"); GG.game.applySettings(); GG.save.saveSettings(); GG.bus.emit("ui:click");
         }));
+        flip('[data-t="colorblind"]', () => { s.gameplay.colorblind = !s.gameplay.colorblind; });
+        flip('[data-t="flash"]', () => { s.graphics.flash = s.graphics.flash === false; });
+        flip('[data-t="assist"]', () => { s.gameplay.assist = !s.gameplay.assist; });
         wrap.querySelectorAll('[data-t="shake"]').forEach(span => span.addEventListener("click", () => {
           s.graphics.shake = !s.graphics.shake; span.querySelector(".toggle").classList.toggle("on"); GG.game.applySettings(); GG.save.saveSettings(); GG.bus.emit("ui:click");
         }));
@@ -507,8 +630,9 @@
         return `<div class="key ${cls}" data-code="${code}">${short(code) || code}</div>`;
       };
       const rows = KROWS.map(r => `<div class="kbrow">${r.map(keyHtml).join("")}</div>`).join("");
-      const bindRow = (p, hero, cls) => ["left","right","up","down","action","special","attack"].map(a =>
-        `<button class="btn small ${cls}" data-rb="${p}:${a}"><span class="ico">${a === "up" ? "⤴" : a === "action" ? "✦" : a === "down" ? "▾" : a === "left" ? "◀" : "▶"}</span>${short(b["p"+p][a])}</button>`).join("");
+      const ICO = { up: "⤴", action: "✦", down: "▾", left: "◀", right: "▶", special: "✺", attack: "➶", melee: "⚔", dodge: "↻" };
+      const bindRow = (p, hero, cls) => ["left","right","up","down","action","special","attack","melee","dodge"].map(a =>
+        `<button class="btn small ${cls}" data-rb="${p}:${a}" title="${a}"><span class="ico">${ICO[a]}</span>${short(b["p"+p][a])}</button>`).join("");
       const wrap = el(`
         <div>
           <div class="section-title">⌨ Controls</div>
@@ -626,6 +750,7 @@
           <h2>⏸ Paused <span class="badge">${pct}% discovered</span></h2>
           <button class="btn primary nav" data-a="resume"><span class="ico">▶</span><span class="label">Resume</span></button>
           <button class="btn nav" data-a="map"><span class="ico">🗺</span><span class="label">World Map<span class="sub"><span class="kbd">M</span></span></span></button>
+          ${!client && GG.world.canFastTravelFrom(GG.world.state.room) ? `<button class="btn nav" data-a="travel"><span class="ico">✦</span><span class="label">Fast Travel<span class="sub">to any shrine you've made safe</span></span></button>` : ""}
           ${client ? "" : `<button class="btn nav" data-a="door"><span class="ico">↺</span><span class="label">Back to the Doorway<span class="sub"><span class="kbd">R</span> · if you get stuck</span></span></button>
           <button class="btn nav" data-a="reset"><span class="ico">⟲</span><span class="label">Reset This Room<span class="sub">puzzles here start over</span></span></button>`}
           <button class="btn nav" data-a="controls"><span class="ico">⌨</span><span class="label">Controls</span></button>
@@ -634,6 +759,7 @@
         </div>`);
       click(node, '[data-a="resume"]', () => GG.game.resume());
       click(node, '[data-a="map"]', () => { GG.game.resume(); GG.game.toggleMap(true); });
+      click(node, '[data-a="travel"]', () => this.showFastTravel());
       click(node, '[data-a="door"]', () => GG.game.restartLevel(false));
       click(node, '[data-a="reset"]', () => GG.game.restartLevel(true));
       click(node, '[data-a="controls"]', () => this.showControls("pause"));
@@ -740,7 +866,7 @@
           this._hudKey = key;
           q(".hud-obj").innerHTML = `🗺 ${lvl.data.biome} · <b>${GG.world.percent.toFixed(1)}%</b> discovered`;
         }
-        q(".hud-stats").innerHTML = `${pw} · 💎 <b>${st.gems || 0}</b> · <span class="timer">${U.formatTime(lvl.timeMs).split(".")[0]}</span>`;
+        q(".hud-stats").innerHTML = `${pw} · 💎 <b>${GG.world.wallet}</b> · <span class="timer">${U.formatTime(lvl.timeMs).split(".")[0]}</span>${st.ng ? ' · <span class="badge">NG+' + st.ng + '</span>' : ""}`;
       } else {
       q(".hud-obj").innerHTML = `🎯 ${lvl.data.hint || "Reach the exits together"}`;
       q(".hud-stats").innerHTML =
@@ -752,7 +878,7 @@
       // shared ability energy bar (pulses red when nearly drained)
       const fill = q(".hud-energy-fill");
       const bar = q(".hud-energy");
-      if (bar) bar.style.display = (game.worldMode && !(GG.world.hasPower("swing") || GG.world.hasPower("tele"))) ? "none" : "";
+      if (bar) bar.style.display = "";
       if (fill) {
         const f = lvl.energy / lvl.energyMax;
         fill.style.width = (f * 100).toFixed(0) + "%";
@@ -771,8 +897,11 @@
         const atExit = lvl.exits[i] && lvl.exits[i].occupied;
         h.portrait.style.filter = atExit ? "brightness(1.25)" : "";
         // crystal: 3 shards; break them when defeated
-        const shards = h.crystal.querySelectorAll("i");
-        shards.forEach(s => s.classList.toggle("broken", p.dead));
+        // hearts: one crystal shard per heart; lost hearts break
+        const max = lvl.healthMode ? (p.maxHp || 3) : 3;
+        if (h.crystal.children.length !== max) h.crystal.innerHTML = "<i></i>".repeat(max);
+        const hp = lvl.healthMode ? (p.dead ? 0 : p.hp) : (p.dead ? 0 : 3);
+        h.crystal.querySelectorAll("i").forEach((s, k) => s.classList.toggle("broken", k >= hp));
         // respawn / "invulnerable" countdown while reviving
         if (p.dead) { const left = Math.max(0, 0.9 - p.deadTimer); h.respawn.textContent = left > 0.05 ? `Reviving ${left.toFixed(1)}s` : "…"; }
         else h.respawn.textContent = atExit ? "At the gate ✦" : "";

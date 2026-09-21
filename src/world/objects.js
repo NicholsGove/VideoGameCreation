@@ -25,6 +25,24 @@
     red:   { main: "#ff5a6a", dim: "#7a2b33", glow: "#ff9aa4" },
   };
 
+  // Colourblind assist: swap to a palette that stays distinct for red/green
+  // colour blindness (Okabe-Ito). Danger becomes magenta, Nichols' mechanisms
+  // orange; Level adds stripes and letter badges so colour is never the only cue.
+  const PALETTES = {
+    normal: JSON.parse(JSON.stringify(COLORS)),
+    assist: {
+      blue:  { main: "#56b4e9", dim: "#1f4f6e", glow: "#a6dcf7" },
+      green: { main: "#e69f00", dim: "#6e4c00", glow: "#ffd27a" },
+      gold:  { main: "#f0e442", dim: "#77701e", glow: "#fbf5a8" },
+      red:   { main: "#cc3fa0", dim: "#5e1d4a", glow: "#f29bd8" },
+    },
+  };
+  GG.setColorblind = (on) => {
+    const P = on ? PALETTES.assist : PALETTES.normal;
+    for (const k in P) Object.assign(COLORS[k], P[k]);
+    GG.colorblind = !!on;
+  };
+
   /** Base class: gives every object an id and a bounding box. */
   class GObj {
     constructor(cfg) {
@@ -355,6 +373,8 @@
           ctx.fillStyle = "#aab4c8";
           ctx.beginPath(); ctx.moveTo(sx, this.y + this.h);
           ctx.lineTo(sx + sw / 2, this.y); ctx.lineTo(sx + sw, this.y + this.h); ctx.fill();
+          ctx.fillStyle = "#ff5a6a";                     // danger-red tip: red always means "this kills"
+          ctx.beginPath(); ctx.moveTo(sx + sw * 0.35, this.y + this.h * 0.32); ctx.lineTo(sx + sw / 2, this.y); ctx.lineTo(sx + sw * 0.65, this.y + this.h * 0.32); ctx.fill();
           ctx.fillStyle = "#e6ecf5";                     // glint on the leading face
           ctx.beginPath(); ctx.moveTo(sx + sw * 0.34, this.y + this.h * 0.5);
           ctx.lineTo(sx + sw / 2, this.y + 2); ctx.lineTo(sx + sw * 0.5, this.y + this.h * 0.55); ctx.fill();
@@ -367,9 +387,31 @@
   // ------------------------------------------------------------------ Laser + Mirror
   class Mirror extends GObj {
     // orientation: "/" or "\" — reflects a laser beam 90°.
-    constructor(cfg) { super(Object.assign({ w: C.TILE, h: C.TILE, orient: "/" }, cfg)); }
+    // `rotatable` mirrors turn when a hero standing at them presses ACTION.
+    constructor(cfg) { super(Object.assign({ w: C.TILE, h: C.TILE, orient: "/" }, cfg)); this._cool = 0; this.t = 0; }
     solidRect() { return null; }
+    update(dt, level) {
+      this.t += dt;
+      if (!this.rotatable) return;
+      this._cool = Math.max(0, this._cool - dt);
+      const zone = { x: this.x - 8, y: this.y - 8, w: this.w + 16, h: this.h + 28 };
+      for (const p of level.players) {
+        if (p.dead || !p.input || !p.input.action || this._cool > 0) continue;
+        if (!U.aabb(p, zone)) continue;
+        this.orient = this.orient === "/" ? "\\" : "/";
+        this._cool = 0.4;
+        GG.bus.emit("mirror:turn", {});
+        level.fx.burst({ x: this.cx, y: this.cy, count: 8, color: ["#ffe79a", "#fff"], speed: 70, life: 0.3, glow: true });
+      }
+    }
+    getState() { return this.rotatable ? (this.orient === "/" ? 1 : 2) : null; }
+    setState(s) { if (s) this.orient = s === 1 ? "/" : "\\"; }
     render(ctx) {
+      if (this.rotatable) {                                   // a turning stand with a gold rim
+        ctx.fillStyle = "#4a3a28"; ctx.fillRect(this.x + 6, this.y + this.h - 6, this.w - 12, 6);
+        ctx.strokeStyle = "rgba(255,231,154," + (0.35 + Math.sin(this.t * 3) * 0.2) + ")"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(this.cx, this.cy, this.w * 0.55, 0, Math.PI * 2); ctx.stroke();
+      }
       ctx.strokeStyle = "#cfe0ff"; ctx.lineWidth = 4; ctx.lineCap = "round";
       ctx.shadowBlur = 6; ctx.shadowColor = "#cfe0ff";
       ctx.beginPath();
@@ -385,7 +427,11 @@
     // TIMED lasers (`period`, `onTime`, `phase`) pulse on a clock shared with
     // the level timer (so host and client agree), flickering a warning first.
     constructor(cfg) { super(Object.assign({ w: C.TILE, h: C.TILE, dir: "right" }, cfg)); this.segments = []; this.t = 0; }
-    _clock(level) { return (((level.timeMs || 0) / 1000 + (this.phase || 0)) % this.period + this.period) % this.period; }
+    _clock(level) {
+      // open-world traps run on the level's trap clock (Assist mode slows it)
+      const tt = level.healthMode ? level.hazT : (level.timeMs || 0) / 1000;
+      return ((tt + (this.phase || 0)) % this.period + this.period) % this.period;
+    }
     active(level) {
       let on = this.channel == null ? true : (this.invert ? !level.getChannel(this.channel) : level.getChannel(this.channel));
       if (on && this.period) on = this._clock(level) < (this.onTime || this.period / 2);
@@ -410,9 +456,10 @@
         ctx.stroke(); ctx.restore();
       }
       if (!this.active(level)) return;
-      // beam
-      ctx.strokeStyle = COLORS.red.main; ctx.lineWidth = 3 + Math.sin(this.t * 20) * 0.6;
-      ctx.shadowBlur = 12; ctx.shadowColor = COLORS.red.glow; ctx.lineCap = "round";
+      // beam (a harmless golden sunbeam, or a lethal red laser)
+      const col = this.light ? COLORS.gold : COLORS.red;
+      ctx.strokeStyle = col.main; ctx.lineWidth = (this.light ? 5 : 3) + Math.sin(this.t * 20) * 0.6;
+      ctx.shadowBlur = 12; ctx.shadowColor = col.glow; ctx.lineCap = "round";
       ctx.beginPath();
       for (const s of this.segments) { ctx.moveTo(s.x1, s.y1); ctx.lineTo(s.x2, s.y2); }
       ctx.stroke(); ctx.shadowBlur = 0;
@@ -477,41 +524,201 @@
 
   // ------------------------------------------------------------------ Tutorial sign
   class Tutor extends GObj {
-    // A floating parchment that teaches a mechanic in-world: title, lines of
-    // text, and key glyphs. Pure guidance — no collision, no state.
-    constructor(cfg) { super(Object.assign({ w: 10, h: 10, title: "", lines: [], keys: [] }, cfg)); this.t = 0; }
+    // An in-world tip card that teaches a mechanic: a title, a short
+    // paragraph and key caps. Pure guidance: no collision, no state.
+    //
+    // It stays out of the way: from afar it is a small floating "?" rune;
+    // when a hero walks up it unfolds into a card, and it folds away again
+    // when they leave. Settings > Gameplay > "Tutorial tips" picks Smart
+    // (unfold when near), Always open, or Hidden, and H flips hidden on/off.
+    constructor(cfg) {
+      super(Object.assign({ w: 10, h: 10, title: "", lines: [], keys: [] }, cfg));
+      this.t = ((this.x * 0.013 + this.y * 0.007) % 6); this.open = 0; this.seen = 0; this._rt = 0; this._lay = null;
+    }
     update(dt) { this.t += dt; }
-    render(ctx) {
-      const lines = this.lines || [];
-      const wMax = Math.max(150, ...lines.map(l => l.length * 5.6), (this.title || "").length * 7.5);
-      const w = wMax + 24, h = 30 + lines.length * 14 + (this.keys.length ? 26 : 0);
-      const x = this.x - w / 2, y = this.y - h + Math.sin(this.t * 1.6) * 3;
-      ctx.save();
-      ctx.globalAlpha = 0.92;
-      ctx.fillStyle = "rgba(25,19,48,0.92)";
-      ctx.fillRect(x, y, w, h);
-      ctx.strokeStyle = "#d89a2e"; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
-      ctx.fillStyle = "#f2c14e"; ctx.font = "700 12px 'Cinzel', Georgia, serif"; ctx.textAlign = "center";
-      ctx.fillText(this.title, this.x, y + 16);
-      ctx.fillStyle = "#f6ecd2"; ctx.font = "10px 'Segoe UI', sans-serif";
-      lines.forEach((l, i) => ctx.fillText(l, this.x, y + 32 + i * 13));
-      // key glyphs: [["E","Nichols"],["·","Nibihah"]]
-      if (this.keys.length) {
-        const ky = y + h - 16;
-        let kx = this.x - (this.keys.length - 1) * 42;
-        for (const [key, who] of this.keys) {
-          ctx.fillStyle = "#241d38"; ctx.fillRect(kx - 30, ky - 10, 26, 16);
-          ctx.strokeStyle = "#f2c14e"; ctx.lineWidth = 1; ctx.strokeRect(kx - 30, ky - 10, 26, 16);
-          ctx.fillStyle = "#f2c14e"; ctx.font = "700 10px 'Segoe UI', monospace";
-          ctx.fillText(key, kx - 17, ky + 2);
-          ctx.fillStyle = "#cdb488"; ctx.font = "9px 'Segoe UI', sans-serif"; ctx.textAlign = "left";
-          ctx.fillText(who, kx, ky + 2); ctx.textAlign = "center";
-          kx += 84;
-        }
+    static mode() {
+      const g = GG.save && GG.save.settings && GG.save.settings.gameplay;
+      const m = g && g.tutorials;
+      return m === "off" || m === false ? "off" : m === "always" ? "always" : "smart";
+    }
+    _near(level) {
+      if (!level || !level.players) return false;
+      for (const p of level.players) {
+        if (!p || p.dead) continue;
+        const dx = Math.abs((p.cx != null ? p.cx : p.x) - this.x), dy = (p.y != null ? p.y : 0) - this.y;
+        if (dx < 200 && dy > -120 && dy < 330) return true;
       }
-      // pointer
-      ctx.fillStyle = "#d89a2e";
-      ctx.beginPath(); ctx.moveTo(this.x - 6, y + h); ctx.lineTo(this.x, y + h + 9); ctx.lineTo(this.x + 6, y + h); ctx.fill();
+      return false;
+    }
+    // wrap the paragraph once per font load; measure with the live context
+    _layout(ctx) {
+      if (this._lay) return this._lay;
+      const words = (this.lines || []).join(" ").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+      const MAXW = 236;
+      ctx.font = "500 10px 'Segoe UI', system-ui, sans-serif";
+      const rows = []; let cur = "";
+      for (const w of words) {
+        const test = cur ? cur + " " + w : w;
+        if (cur && ctx.measureText(test).width > MAXW) { rows.push(cur); cur = w; } else cur = test;
+      }
+      if (cur) rows.push(cur);
+      let wText = 0; for (const r of rows) wText = Math.max(wText, ctx.measureText(r).width);
+      ctx.font = "700 11px 'Cinzel', Georgia, serif";
+      const wTitle = ctx.measureText(this.title || "").width + 40;
+      // key chips: [label, who]
+      ctx.font = "700 9px 'Segoe UI', system-ui, sans-serif";
+      const chips = (this.keys || []).map(([k, who]) => {
+        const kw = Math.max(18, ctx.measureText(k).width + 10);
+        ctx.font = "600 9px 'Segoe UI', system-ui, sans-serif";
+        const ww = who ? ctx.measureText(who).width + 6 : 0;
+        ctx.font = "700 9px 'Segoe UI', system-ui, sans-serif";
+        return { k, who, kw, ww, w: kw + ww };
+      });
+      const wChips = chips.reduce((s, c) => s + c.w, 0) + Math.max(0, chips.length - 1) * 14;
+      const w = Math.ceil(Math.max(150, wText, wTitle, wChips) + 28);
+      const h = 34 + rows.length * 13 + (chips.length ? 24 : 0) + 8;
+      this._lay = { rows, chips, w, h, wChips };
+      return this._lay;
+    }
+    static heroTint(who) {
+      if (who === "Nichols") return "#6fdc84";
+      if (who === "Nibihah") return "#79b8ff";
+      return "#e9cf8f";
+    }
+    static rr(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+    }
+    // draw a line of text, with ALL-CAPS words picked out in gold
+    static richText(ctx, s, cx, y) {
+      const parts = s.split(/(\s+)/);
+      const total = ctx.measureText(s).width;
+      let x = cx - total / 2;
+      ctx.textAlign = "left";
+      for (const p of parts) {
+        const bare = p.replace(/[^A-Za-z]/g, "");
+        const hot = bare.length >= 2 && bare === bare.toUpperCase();
+        ctx.fillStyle = hot ? "#ffd772" : "#f4ecdb";
+        ctx.fillText(p, x, y);
+        x += ctx.measureText(p).width;
+      }
+      ctx.textAlign = "center";
+    }
+    render(ctx, level) {
+      const mode = Tutor.mode();
+      // ease the fold with real time so it animates on every client
+      const now = (typeof performance !== "undefined" ? performance.now() : Date.now()) / 1000;
+      const rdt = this._rt ? Math.min(0.1, now - this._rt) : 0; this._rt = now;
+      const near = this._near(level);
+      if (near) this.seen = Math.min(1, this.seen + rdt * 0.5);
+      const want = mode === "off" ? 0 : mode === "always" ? 1 : near ? 1 : 0;
+      this.open += (want - this.open) * Math.min(1, rdt * 7);
+      if (Math.abs(want - this.open) < 0.002) this.open = want;
+      if (mode === "off" && this.open <= 0.01) return;
+
+      const bob = Math.sin(this.t * 1.6) * 2.5;
+      ctx.save();
+      ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+
+      // ---- the folded rune (visible when closed, fades as the card opens)
+      const runeA = mode === "off" ? 0 : (1 - this.open);
+      if (runeA > 0.02) {
+        const rx = this.x, ry = this.y - 14 + bob, pulse = 0.5 + 0.5 * Math.sin(this.t * 3);
+        ctx.globalAlpha = runeA * (this.seen >= 1 ? 0.55 : 1);
+        const g = ctx.createRadialGradient(rx, ry, 0, rx, ry, 18);
+        g.addColorStop(0, "rgba(255,215,114," + (0.35 + pulse * 0.25) + ")"); g.addColorStop(1, "rgba(255,215,114,0)");
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(rx, ry, 18, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(rx, ry - 9); ctx.lineTo(rx + 8, ry); ctx.lineTo(rx, ry + 9); ctx.lineTo(rx - 8, ry); ctx.closePath();
+        const dg = ctx.createLinearGradient(rx, ry - 9, rx, ry + 9);
+        dg.addColorStop(0, "#3b2f63"); dg.addColorStop(1, "#1b1533");
+        ctx.fillStyle = dg; ctx.fill();
+        ctx.strokeStyle = "#f2c14e"; ctx.lineWidth = 1.2; ctx.stroke();
+        ctx.fillStyle = "#ffe29a"; ctx.font = "700 10px 'Cinzel', Georgia, serif";
+        ctx.fillText("?", rx, ry + 3.5);
+      }
+
+      // ---- the card
+      if (this.open > 0.02) {
+        const L = this._layout(ctx);
+        const k = this.open, ease = 1 - Math.pow(1 - k, 3);
+        const w = L.w, h = L.h;
+        const x = this.x - w / 2;
+        let y = this.y - h - 16 + bob + (1 - ease) * 14;
+        // keep the card clear of the HUD strip at the top of the screen
+        const m = ctx.getTransform && ctx.getTransform();
+        if (m && ctx.canvas && m.d > 0) {
+          const top = ctx.canvas.height * 0.15, sy = m.d * y + m.f;
+          if (sy < top) y += (top - sy) / m.d;
+        }
+        ctx.globalAlpha = ease;
+        // grow from the rune
+        ctx.translate(this.x, y + h); ctx.scale(0.85 + 0.15 * ease, 0.7 + 0.3 * ease); ctx.translate(-this.x, -(y + h));
+        // soft shadow
+        ctx.fillStyle = "rgba(0,0,0,0.35)"; Tutor.rr(ctx, x + 2, y + 4, w, h, 9); ctx.fill();
+        // glass body
+        const bg = ctx.createLinearGradient(0, y, 0, y + h);
+        bg.addColorStop(0, "rgba(44,34,82,0.94)"); bg.addColorStop(1, "rgba(18,14,36,0.94)");
+        ctx.fillStyle = bg; Tutor.rr(ctx, x, y, w, h, 9); ctx.fill();
+        // header band
+        ctx.save(); Tutor.rr(ctx, x, y, w, h, 9); ctx.clip();
+        const hb = ctx.createLinearGradient(x, 0, x + w, 0);
+        hb.addColorStop(0, "rgba(242,193,78,0)"); hb.addColorStop(0.5, "rgba(242,193,78,0.16)"); hb.addColorStop(1, "rgba(242,193,78,0)");
+        ctx.fillStyle = hb; ctx.fillRect(x, y, w, 24);
+        ctx.restore();
+        // border: gold hairline + inner light
+        ctx.strokeStyle = "rgba(242,193,78,0.85)"; ctx.lineWidth = 1.2; Tutor.rr(ctx, x, y, w, h, 9); ctx.stroke();
+        ctx.strokeStyle = "rgba(255,255,255,0.07)"; ctx.lineWidth = 1; Tutor.rr(ctx, x + 2.5, y + 2.5, w - 5, h - 5, 7); ctx.stroke();
+        // title with a small rune badge
+        ctx.font = "700 11px 'Cinzel', Georgia, serif";
+        const tw = ctx.measureText(this.title || "").width;
+        const by = y + 13.5;
+        for (const sx of [-1, 1]) {
+          const px = this.x + sx * (tw / 2 + 11);
+          ctx.fillStyle = "#f2c14e";
+          ctx.beginPath(); ctx.moveTo(px, by - 3.5); ctx.lineTo(px + 3.5, by); ctx.lineTo(px, by + 3.5); ctx.lineTo(px - 3.5, by); ctx.closePath(); ctx.fill();
+        }
+        ctx.font = "700 11px 'Cinzel', Georgia, serif";
+        ctx.fillStyle = "#ffd772"; ctx.fillText(this.title || "", this.x, y + 17.5);
+        // rule
+        const rg = ctx.createLinearGradient(x + 14, 0, x + w - 14, 0);
+        rg.addColorStop(0, "rgba(242,193,78,0)"); rg.addColorStop(0.5, "rgba(242,193,78,0.7)"); rg.addColorStop(1, "rgba(242,193,78,0)");
+        ctx.fillStyle = rg; ctx.fillRect(x + 14, y + 25, w - 28, 1);
+        // text
+        ctx.font = "500 10px 'Segoe UI', system-ui, sans-serif";
+        L.rows.forEach((r, i) => Tutor.richText(ctx, r, this.x, y + 40 + i * 13));
+        // key chips
+        if (L.chips.length) {
+          const ky = y + h - 22;
+          let kx = this.x - L.wChips / 2;
+          for (const c of L.chips) {
+            // key cap: darker base + raised face
+            ctx.fillStyle = "#0e0b1c"; Tutor.rr(ctx, kx, ky + 2, c.kw, 15, 3); ctx.fill();
+            const kg = ctx.createLinearGradient(0, ky, 0, ky + 14);
+            kg.addColorStop(0, "#4a3f78"); kg.addColorStop(1, "#2c2450");
+            ctx.fillStyle = kg; Tutor.rr(ctx, kx, ky, c.kw, 14, 3); ctx.fill();
+            ctx.strokeStyle = Tutor.heroTint(c.who); ctx.lineWidth = 1; Tutor.rr(ctx, kx + 0.5, ky + 0.5, c.kw - 1, 13, 3); ctx.stroke();
+            ctx.fillStyle = "#fff4d6"; ctx.font = "700 9px 'Segoe UI', system-ui, sans-serif";
+            ctx.fillText(c.k, kx + c.kw / 2, ky + 10);
+            if (c.who) {
+              ctx.textAlign = "left"; ctx.fillStyle = Tutor.heroTint(c.who); ctx.font = "600 9px 'Segoe UI', system-ui, sans-serif";
+              ctx.fillText(c.who, kx + c.kw + 5, ky + 10); ctx.textAlign = "center";
+            }
+            kx += c.w + 14;
+          }
+        }
+        // tail pointing down at the spot it teaches
+        ctx.fillStyle = "rgba(18,14,36,0.94)"; ctx.strokeStyle = "rgba(242,193,78,0.85)"; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(this.x - 7, y + h - 0.5); ctx.lineTo(this.x, y + h + 8); ctx.lineTo(this.x + 7, y + h - 0.5); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(this.x - 7, y + h); ctx.lineTo(this.x, y + h + 8); ctx.lineTo(this.x + 7, y + h); ctx.stroke();
+        // hint, tucked in the corner
+        ctx.globalAlpha = ease * 0.45; ctx.textAlign = "right"; ctx.fillStyle = "#cdbf9d";
+        ctx.font = "600 7px 'Segoe UI', system-ui, sans-serif";
+        ctx.fillText("H hide", x + w - 8, y + 11);
+      }
       ctx.restore(); ctx.textAlign = "left"; ctx.globalAlpha = 1;
     }
   }
@@ -525,6 +732,7 @@
       super(Object.assign({ w: 24, h: 14, hp: 4 }, cfg));
       this.x0 = this.x; this.y0 = this.y;
       this.maxHp = this.hp; this.deadRat = false;
+      this.bites = true;                 // in the open world a bite costs a heart
       this.vx = 0; this.vy = 0; this.dir = 1;
       this.t = (cfg.seed || 0) * 1.7; this._flash = 0;
     }
@@ -566,7 +774,7 @@
       GG.Physics.move(this, this.vx * dt, this.vy * dt, level.tilemap.solidsIn(this.x - 8, this.y - 8, this.w + 16, this.h + 16));
       if (this.y > level.tilemap.h + 60) { this.deadRat = true; return; }
       // teeth
-      for (const p of level.players) if (!p.dead && U.aabb(p, this)) p.kill(level, "rat");
+      for (const p of level.players) if (!p.dead && U.aabb(p, this)) (level.healthMode ? p.hurt(level, 1, this.cx) : p.kill(level, "rat"));
     }
     render(ctx) {
       if (this.deadRat) return;
@@ -1064,7 +1272,7 @@
           if (!p.input || !p.input.specialPressed) continue;
           if (Math.hypot(p.cx - this.cx, p.cy - this.cy) > this.range) continue;
           if (level.energy < 6) continue;
-          this.carried = p; p.teleHold = this; this._grabCool = 0.3; this._grabY = this.y;
+          this.carried = p; p.teleHold = this; this._grabCool = 0.3; this._grabY = this.y; GG.bus.emit("player:tele", {});
           GG.bus.emit("switch:toggled", {});
           level.fx.burst({ x: this.cx, y: this.cy, count: 10, color: COLORS.green.glow, speed: 80, life: 0.4, glow: true });
           break;
@@ -1123,6 +1331,7 @@
         const a = Math.atan2(dx, dy);                                          // angle from straight-down
         const av = (p.vx * Math.cos(a) - p.vy * Math.sin(a)) / L;              // carry momentum in
         p.swing = { ax: this.cx, ay: this.cy, L, a, av, cool: 0.25 };
+        GG.bus.emit("player:hook", {});
         p.dashTime = 0;
         GG.bus.emit("player:jump", { index: p.index });
         level.fx.burst({ x: this.cx, y: this.cy, count: 8, color: COLORS.blue.glow, speed: 70, life: 0.3, glow: true });
@@ -1497,15 +1706,16 @@
   class Blinker extends GObj {
     // Phases in and out on a fixed cycle — pure timing.
     constructor(cfg) { super(Object.assign({ w: C.TILE * 2, h: 14, period: 2.4, duty: 0.55, phase: 0 }, cfg)); this.t = cfg.phase || 0; }
-    update(dt) { this.t += dt; }
+    update(dt, level) { this.t = this.sync && level ? (level.healthMode ? level.hazT : (level.timeMs || 0) / 1000) + (this.phase || 0) : this.t + dt; }
     get on() { return ((this.t % this.period) / this.period) < this.duty; }
     solidRect() { return this.on ? this : null; }
     render(ctx) {
       const frac = (this.t % this.period) / this.period;
       const closing = this.on && frac > this.duty - 0.25;
       ctx.globalAlpha = this.on ? (closing ? 0.4 + Math.abs(Math.sin(this.t * 22)) * 0.6 : 1) : 0.15;
-      ctx.fillStyle = COLORS.blue.dim; ctx.fillRect(this.x, this.y, this.w, this.h);
-      ctx.fillStyle = COLORS.blue.main; ctx.shadowBlur = this.on ? 8 : 0; ctx.shadowColor = COLORS.blue.glow;
+      const bc = this.heart ? { dim: "#5a2f8a", main: "#c79bff", glow: "#e0c8ff" } : COLORS.blue;
+      ctx.fillStyle = bc.dim; ctx.fillRect(this.x, this.y, this.w, this.h);
+      ctx.fillStyle = bc.main; ctx.shadowBlur = this.on ? 8 : 0; ctx.shadowColor = bc.glow;
       ctx.fillRect(this.x, this.y, this.w, 3);
       ctx.shadowBlur = 0; ctx.globalAlpha = 1;
     }
@@ -1710,6 +1920,7 @@
         if (Math.abs(dx) < this.range && dy < 48 && Math.sign(dx) === p.facing && this._cool === 0 && !(this.latch && this.on)) {
           this.on = !this.on; this._cool = 0.35;
           p.grappleFx = { x: this.cx, y: this.cy, t: 0.25 };
+          GG.bus.emit("player:grapple", {});
           GG.bus.emit("switch:toggled", { channel: this.channel, on: this.on });
           level.fx.burst({ x: this.cx, y: this.cy, count: 10, color: COLORS.blue.main, speed: 90, life: 0.35, glow: true });
         }

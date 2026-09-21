@@ -47,7 +47,7 @@
       if (opts.full) {
         let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
         for (const r of world.rooms) {
-          if (!explored.has(r.id) && !sensed.has(r.id)) continue;
+          if (!explored.has(r.id) && !sensed.has(r.id) && !(state.reveal && state.reveal[r.region])) continue;
           x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
         }
         if (x0 > x1) { x0 = cur.x; y0 = cur.y; x1 = cur.x + cur.w; y1 = cur.y + cur.h; }
@@ -63,6 +63,16 @@
       }
       ctx.save();
       ctx.beginPath(); ctx.rect(rect.x, rect.y, rect.w, rect.h); ctx.clip();
+      // regions whose map was bought from the merchant: every room outlined
+      const rev = state.reveal || {};
+      ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+      for (const r of world.rooms) {
+        if (!rev[r.region] || explored.has(r.id)) continue;
+        const rr = roomRect(r, cs, ox, oy), reg = WG.REGIONS[r.region];
+        ctx.fillStyle = "rgba(20,16,36,0.5)"; ctx.fillRect(rr.x + 1, rr.y + 1, rr.w - 2, rr.h - 2);
+        ctx.strokeStyle = reg.color; ctx.globalAlpha = 0.55; ctx.strokeRect(rr.x + 1.5, rr.y + 1.5, rr.w - 3, rr.h - 3); ctx.globalAlpha = 1;
+        if (r.kind === "shrine") { ctx.fillStyle = WG.POWERS[r.power].tint; ctx.font = `${Math.max(8, cs * 0.5)}px Georgia, serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(WG.POWERS[r.power].glyph, rr.x + rr.w / 2, rr.y + rr.h / 2 + 1); }
+      }
       // sensed rooms: faint dashed outline
       ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
       for (const id of sensed) {
@@ -118,6 +128,18 @@
           }
         }
       }
+      // pins the players dropped
+      for (const k of state.pins || []) {
+        const [px, py] = k.split(",").map(Number);
+        const x = ox + (px + 0.5) * cs, y = oy + (py + 0.5) * cs, r = Math.max(3, cs * 0.18);
+        ctx.fillStyle = "#ff6b8a"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(x, y - r, r, Math.PI, 0); ctx.lineTo(x, y + r * 0.8); ctx.closePath(); ctx.fill(); ctx.stroke();
+      }
+      if (opts.cursor) {
+        const c = opts.cursor, x = ox + c.x * cs, y = oy + c.y * cs;
+        ctx.strokeStyle = "#ffe79a"; ctx.lineWidth = 2; ctx.globalAlpha = 0.6 + Math.sin(t * 8) * 0.4;
+        ctx.strokeRect(x + 1, y + 1, cs - 2, cs - 2); ctx.globalAlpha = 1;
+      }
       // the heroes
       if (opts.level) {
         for (const h of this._heroCells(opts.level, cur)) {
@@ -130,7 +152,7 @@
     },
 
     /** Full-screen map overlay (design space 960x540). */
-    drawFull(ctx, level, t) {
+    drawFull(ctx, level, t, cursor) {
       const run = GG.world; if (!run.state) return;
       const WG = GG.WORLDGEN, W = C.VIEW_W, H = C.VIEW_H;
       ctx.save();
@@ -150,7 +172,7 @@
       const g = ctx.createLinearGradient(W / 2 - 160, 0, W / 2 + 160, 0);
       g.addColorStop(0, "#6ef0a0"); g.addColorStop(1, "#4fc3ff");
       ctx.fillStyle = g; ctx.fillRect(W / 2 - 160, 74, 320 * pct / 100, 5);
-      this.draw(ctx, { x: 30, y: 88, w: W - 240, h: H - 118 }, { full: true, level, t });
+      this.draw(ctx, { x: 30, y: 88, w: W - 240, h: H - 118 }, { full: true, level, t, cursor });
       // legend: powers + regions
       const lx = W - 196;
       ctx.textAlign = "left";
@@ -168,15 +190,26 @@
       ctx.fillText("REGIONS", lx, 290);
       const known = new Set();
       for (const c of run.world.cells) if (run.state.disc[c.key]) known.add(run.world.rooms[c.room].region);
+      // secrets still hidden per region (gems and upgrades)
+      if (!this._sec || this._secKey !== run.state.gems + "|" + Object.keys(run.state.upgrades || {}).length) {
+        try { this._sec = run.secrets(); } catch (_) { this._sec = null; }
+        this._secKey = run.state.gems + "|" + Object.keys(run.state.upgrades || {}).length;
+      }
       WG.REGIONS.forEach((r, i) => {
-        const y = 308 + i * 18;
+        const y = 308 + i * 24;
         ctx.fillStyle = known.has(i) ? r.color : "rgba(200,190,230,0.25)";
         ctx.fillRect(lx, y - 8, 10, 10);
         ctx.font = "11px Georgia, serif"; ctx.fillStyle = known.has(i) ? "#f6ecd2" : "rgba(200,190,230,0.3)";
         ctx.fillText(known.has(i) ? r.name : "Undiscovered", lx + 16, y + 1);
+        const sc = this._sec && this._sec[i];
+        if (sc && known.has(i)) {
+          const left = (sc.gemsT - sc.gems) + (sc.upT - sc.up);
+          ctx.font = "9px Georgia, serif"; ctx.fillStyle = left ? "#cdb488" : "#6ef0a0";
+          ctx.fillText(left ? `◆ ${sc.gems}/${sc.gemsT}  ♥⚡ ${sc.up}/${sc.upT}` : "✓ every secret found", lx + 16, y + 12);
+        }
       });
       ctx.fillStyle = "rgba(246,236,210,0.6)"; ctx.font = "10px Georgia, serif"; ctx.textAlign = "center";
-      ctx.fillText("M / Tab — close map   ·   glyphs mark gates that need a power", W / 2, H - 22);
+      ctx.fillText("M / Tab: close   ·   WASD / arrows: move cursor   ·   P / Enter: drop or lift a pin   ·   glyphs mark gates that need a power", W / 2, H - 22);
       ctx.restore();
     },
 

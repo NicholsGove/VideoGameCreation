@@ -115,8 +115,58 @@
         case "uiback":   this._tone("sfx", 420, 0.16, "sine", 0.14, 170); this._noise("sfx", 0.10, 0.05, 700); break;       // whoosh
         case "uierror":  this._tone("sfx", 150, 0.18, "square", 0.16); break;           // muted buzz
         case "uiconfirm":this._arp("voice", [523, 659, 880], 0.06, 0.22); break;        // triumphant click
+        // ---- movement & powers: each has its own voice
+        case "dash":     this._noise("sfx", 0.18, 0.16, 1200); this._tone("sfx", 520, 0.14, "sine", 0.12, 1100); break;
+        case "walljump": this._tone("sfx", 360, 0.08, "square", 0.14, 540); this._noise("sfx", 0.05, 0.08, 900); break;
+        case "release":  this._tone("sfx", 440, 0.2, "sine", 0.14, 880); break;
+        case "toss":     this._tone("sfx", 180, 0.12, "triangle", 0.2, 360); this._tone("sfx", 540, 0.2, "sine", 0.12, 1080); break;
+        case "catch":    this._tone("sfx", 300, 0.06, "square", 0.14); this._tone("sfx", 450, 0.1, "triangle", 0.12); break;
+        case "ledge":    this._tone("sfx", 250, 0.05, "square", 0.1, 330); break;
+        case "thud":     this._tone("sfx", 70, 0.22, "sine", 0.3, 40); this._noise("sfx", 0.14, 0.2, 120); break;
+        case "bounce":   this._tone("sfx", 200, 0.25, "sine", 0.24, 700); break;
+        case "swim":     this._noise("sfx", 0.12, 0.06, 600); this._tone("sfx", 300, 0.1, "sine", 0.05, 200); break;
+        case "splash":   this._noise("sfx", 0.3, 0.16, 500); break;
+        case "mirror":   this._tone("sfx", 1480, 0.12, "sine", 0.12); this._tone("sfx", 2220, 0.2, "sine", 0.06); break;
+        case "highfive": this._noise("sfx", 0.05, 0.25, 1600); this._arp("voice", [659, 988, 1319], 0.06, 0.18); break;
+        case "grapple":  this._tone("sfx", 800, 0.15, "sawtooth", 0.08, 300); break;
+        case "tele":     this._tone("sfx", 330, 0.5, "sine", 0.1, 660); this._tone("sfx", 495, 0.5, "sine", 0.06, 990); break;
+        case "hook":     this._tone("sfx", 1200, 0.06, "triangle", 0.12, 700); break;
+        case "strike":   this._noise("sfx", 0.08, 0.12, 2200); this._tone("sfx", 520, 0.06, "triangle", 0.08, 300); break;
+        case "strikehit":this._tone("sfx", 160, 0.08, "square", 0.16, 90); this._noise("sfx", 0.06, 0.14, 700); break;
+        case "roll":     this._noise("sfx", 0.18, 0.08, 500); break;
+        case "hurt":     this._tone("sfx", 420, 0.16, "sawtooth", 0.18, 180); this._noise("sfx", 0.1, 0.1, 900); break;
+        case "combo":    this._arp("sfx", [784, 988, 1319], 0.05, 0.16); break;
+        case "upgrade":  this._arp("voice", [523, 659, 784, 1047, 1319], 0.09, 0.22); break;
+        case "bossroar": this._tone("sfx", 90, 0.9, "sawtooth", 0.3, 45); this._noise("sfx", 0.7, 0.2, 150); break;
+        case "bossslam": this._tone("sfx", 55, 0.5, "sine", 0.4, 30); this._noise("sfx", 0.35, 0.25, 90); break;
+        case "bosswarn": this._tone("sfx", 880, 0.1, "square", 0.08); this._tone("sfx", 660, 0.1, "square", 0.08); break;
+        case "bossbeam": this._tone("sfx", 220, 0.6, "sawtooth", 0.14, 440); break;
+        case "bossdown": this._tone("sfx", 300, 1.2, "sawtooth", 0.24, 40); setTimeout(() => this._arp("voice", [523, 659, 784, 1047], 0.12, 0.26), 700); break;
+        case "escape":   this._tone("sfx", 70, 1.4, "sawtooth", 0.3, 50); this._noise("sfx", 1.2, 0.2, 120); break;
+        case "talk":     this._arp("sfx", [440, 554, 494], 0.05, 0.08); break;
+        case "coins":    this._arp("sfx", [988, 1319, 1568], 0.05, 0.14); break;
+        case "thief":    this._tone("sfx", 660, 0.2, "triangle", 0.1, 990); this._tone("sfx", 330, 0.3, "sine", 0.06, 220); break;
+        case "shoot":    this._tone("sfx", 900, 0.06, "square", 0.06, 500); break;
         case "achieve":  this._arp("voice", [659, 880, 1047, 1319], 0.10, 0.26); break;
         default: break;
+      }
+    }
+
+    /** A footstep, voiced by the ground underfoot (and who's walking). */
+    step(surface, heavy) {
+      if (!this.ctx) return;
+      const v = heavy ? 1.3 : 0.8, now = this.ctx.currentTime;
+      if (this._lastStep && now - this._lastStep < 0.06) return;
+      this._lastStep = now;
+      switch (surface) {
+        case "ice":     this._tone("sfx", 1800, 0.04, "sine", 0.03 * v, 2400); this._noise("sfx", 0.04, 0.03 * v, 3000); break;
+        case "forest": case "jungle": this._noise("sfx", 0.07, 0.05 * v, 900); break;          // leaves & grass
+        case "ruins":   this._noise("sfx", 0.06, 0.05 * v, 1400); this._tone("sfx", 500, 0.03, "sine", 0.02 * v, 350); break;   // wet stone
+        case "factory": case "lab": this._tone("sfx", 220, 0.05, "square", 0.035 * v, 180); this._noise("sfx", 0.03, 0.03 * v, 2000); break;  // metal
+        case "temple":  this._tone("sfx", 160, 0.06, "triangle", 0.05 * v, 120); break;       // hollow stone
+        case "city":    this._tone("sfx", 420, 0.04, "sine", 0.03 * v, 380); break;           // marble tap
+        case "heart":   this._tone("sfx", 90, 0.08, "sine", 0.06 * v, 70); break;             // soft, fleshy
+        default:        this._noise("sfx", 0.05, 0.05 * v, 500); break;                        // gravel
       }
     }
 
@@ -156,9 +206,11 @@
     }
 
     startMusic() {
+      // gameplay takes over from the title / story score
+      if (GG.score && GG.score.playing) GG.score.stop(1.2);
       this._enabledMusic = true;
       if (!this.ctx || this._musicTimer) return;
-      this._musicStep = 0;
+      this._musicStep = 0; this._combatMix = 0;
       const tick = () => {
         if (!this._enabledMusic || !this.ctx) return;
         const cfg = this._musicCfg();
@@ -170,6 +222,15 @@
           this._tone("music", note, 0.55, "sine", cfg.vol);
         }
         if (s % 8 === 3) this._tone("music", scale[(s / 2) % scale.length | 0] * 2, 0.35, "triangle", cfg.vol * 0.8);
+        // COMBAT LAYER: when beasts are near, a driving pulse and a low
+        // ostinato fade in over the bed, and fade back out when it's calm
+        this._combatMix += ((this._combat || 0) - this._combatMix) * 0.25;
+        const cm = this._combatMix;
+        if (cm > 0.05) {
+          if (s % 2 === 0) this._noise("music", 0.09, 0.10 * cm, 90);                      // kick-ish thump
+          if (s % 4 === 2) this._noise("music", 0.05, 0.06 * cm, 2400);                    // hat
+          this._tone("music", bass[(s >> 1) % bass.length] * (s % 2 ? 2 : 1), 0.18, "sawtooth", 0.045 * cm);
+        }
         // slow pad chord (root + fifth, long and soft) — the ambient bed
         if (s % 16 === 0) {
           const root = bass[(s / 16) % bass.length | 0];
@@ -182,6 +243,39 @@
       // NOTE: interval stays fixed; per-theme `step` shapes density via the
       // modulo patterns above, which avoids re-timer churn between levels.
     }
+
+    /**
+     * Region ambience: a bed of little one-shot sounds that play at random —
+     * drips in the caves, lapping water, birdsong, clanking machinery, wind,
+     * torch crackle, gulls over the isles, and the Heart's slow thump.
+     */
+    setAmbience(theme) {
+      this._amb = theme || null;
+      if (this._ambTimer) { clearTimeout(this._ambTimer); this._ambTimer = null; }
+      if (!theme || !this.ctx) return;
+      const next = () => {
+        if (!this._amb || !this.ctx) return;
+        this._ambOne(this._amb);
+        this._ambTimer = setTimeout(next, 700 + Math.random() * 2200);
+      };
+      this._ambTimer = setTimeout(next, 900);
+    }
+    _ambOne(theme) {
+      const r = Math.random, v = 0.5;
+      switch (theme) {
+        case "cave":    this._tone("music", 1400 + r() * 900, 0.18, "sine", 0.03 * v, 700); break;                 // drip
+        case "ruins":   this._noise("music", 0.6, 0.03 * v, 300); break;                                          // lapping water
+        case "forest": case "jungle": { const f = 1800 + r() * 1400; this._tone("music", f, 0.08, "sine", 0.025 * v, f * 1.3); setTimeout(() => this._tone("music", f * 1.1, 0.07, "sine", 0.02 * v, f * 1.4), 110); break; }  // birds
+        case "factory": case "lab": this._tone("music", 90 + r() * 60, 0.12, "square", 0.03 * v, 70); this._noise("music", 0.08, 0.03 * v, 2500); break; // clank
+        case "ice":     this._noise("music", 1.4, 0.035 * v, 600); break;                                         // wind
+        case "temple":  this._noise("music", 0.25, 0.02 * v, 1800); break;                                        // torch crackle
+        case "city":    this._tone("music", 1100 + r() * 300, 0.25, "triangle", 0.02 * v, 900); this._noise("music", 1.0, 0.02 * v, 700); break;   // gulls + breeze
+        case "heart":   this._tone("music", 60, 0.2, "sine", 0.08 * v, 45); setTimeout(() => this._tone("music", 55, 0.18, "sine", 0.06 * v, 42), 260); break;  // lub-dub
+      }
+    }
+
+    /** 0..1: how much danger is near (drives the combat music layer). */
+    setCombat(k) { this._combat = Math.max(0, Math.min(1, k || 0)); }
 
     stopMusic() {
       this._enabledMusic = false;
@@ -218,6 +312,44 @@
       b.on("arena:clear", () => this.sfx("unlock"));
       b.on("bridge:built", () => this._tone("sfx", 520, 0.12, "triangle", 0.14, 880));
       b.on("map:discovered", () => this._tone("sfx", 1240, 0.08, "sine", 0.07, 1660));
+      // movement & powers
+      b.on("player:dash", () => this.sfx("dash"));
+      b.on("player:walljump", () => this.sfx("walljump"));
+      b.on("player:release", () => this.sfx("release"));
+      b.on("player:toss", () => this.sfx("toss"));
+      b.on("player:catch", () => this.sfx("catch"));
+      b.on("player:ledge", () => this.sfx("ledge"));
+      b.on("player:thud", () => this.sfx("thud"));
+      b.on("player:bounce", () => this.sfx("bounce"));
+      b.on("player:swim", () => this.sfx("swim"));
+      b.on("water:splash", () => this.sfx("splash"));
+      b.on("mirror:turn", () => this.sfx("mirror"));
+      b.on("player:highfive", () => this.sfx("highfive"));
+      b.on("player:grapple", () => this.sfx("grapple"));
+      b.on("player:tele", () => this.sfx("tele"));
+      b.on("player:hook", () => this.sfx("hook"));
+      b.on("player:shoot", () => this.sfx("shoot"));
+      // combat, guardians, escapes and friends
+      b.on("player:melee", () => this.sfx("strike"));
+      b.on("player:strikehit", () => this.sfx("strikehit"));
+      b.on("player:roll", () => this.sfx("roll"));
+      b.on("player:hurt", () => this.sfx("hurt"));
+      b.on("combo:finisher", () => this.sfx("combo"));
+      b.on("upgrade:found", () => this.sfx("upgrade"));
+      b.on("boss:start", () => this.sfx("bossroar"));
+      b.on("boss:slam", () => this.sfx("bossslam"));
+      b.on("boss:crash", () => this.sfx("bossslam"));
+      b.on("boss:rain", () => this.sfx("bosswarn"));
+      b.on("boss:beam", () => this.sfx("bossbeam"));
+      b.on("boss:summon", () => this.sfx("bossroar"));
+      b.on("boss:phase", () => this.sfx("bossroar"));
+      b.on("boss:defeated", () => this.sfx("bossdown"));
+      b.on("escape:start", () => this.sfx("escape"));
+      b.on("npc:talk", () => this.sfx("talk"));
+      b.on("shop:bought", () => this.sfx("coins"));
+      b.on("thief:seen", () => this.sfx("thief"));
+      // footsteps: every surface sounds different
+      b.on("player:step", (e) => this.step(e && e.surface, e && e.heavy));
       // Nova mrrps, Pip croaks — both mean "there's something hidden here".
       b.on("pet:alert", (e) => this.sfx(e && e.kind === "frog" ? "croak" : "mrrp"));
     }

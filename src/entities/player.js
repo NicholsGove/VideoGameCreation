@@ -25,6 +25,9 @@
       canCarry: true, canGrapple: true, canBuild: true,     // engineer toolkit
       canDash: false, canCrawl: false, canDetect: false,
       jumpScale: 1.0, maxJumps: 1, narrow: false, height: 30, climbGrip: 1.0,
+      // how he FEELS: heavy and grounded — slower to get going and to turn,
+      // falls a touch faster, lands with a thud
+      feel: { accel: 0.82, air: 0.88, turn: 0.8, stop: 1.15, maxFall: 960, heavy: true },
       pal: {
         skin: "#b4784c", skinShade: "#8d5a36", skinLit: "#cf9163",
         hair: "#2a1c14", hairLit: "#4a3423",
@@ -48,6 +51,8 @@
       canCarry: false, canGrapple: false, canBuild: false,
       canDash: true, canCrawl: true, canDetect: true,        // explorer toolkit
       jumpScale: 1.02, maxJumps: 2, narrow: true, height: 24, climbGrip: 0.45,
+      // how she FEELS: light and quick — snappy turns, floaty descent
+      feel: { accel: 1.25, air: 1.2, turn: 1.5, stop: 0.95, maxFall: 780, heavy: false },
       pal: {
         skin: "#b4784c", skinShade: "#8d5a36", skinLit: "#cf9163", hair: "#241812",
         hairLit: "#3d2a1c",
@@ -78,6 +83,9 @@
   const THROW_MAX = 620;       // fully-charged throw speed
   const CHARGE_RATE = 1.7;     // charge units per second (0..1)
   const CARRY_SLOW = 0.82;     // carrying something slows you a little
+  const ROLL_SPEED = 360;      // dodge roll (ground only)
+  const ROLL_TIME = 0.24;
+  const MELEE_TIME = 0.16, MELEE_CD = 0.34;
 
   class Player {
     /** @param {number} index 0 or 1 @param {number} charIndex which character */
@@ -120,6 +128,37 @@
       this.dashesLeft = 1; this.dashTime = 0; this.dashDir = 1;
       this.grappleFx = null;          // {x,y,t} rope visual
       this.carriedBy = null;
+      // --- health & combat (open world) ---
+      this.maxHp = this.maxHp || 3;
+      this.hp = this.maxHp;
+      this.invuln = this._everSpawned ? 1.0 : 0;      // a moment's grace after reviving
+      this.spawnFx = this._everSpawned ? 0.6 : 0;      // light gathers back into the hero
+      this._everSpawned = true;
+      this.meleeT = 0; this.meleeCd = 0; this._meleeFresh = false;
+      this.rollT = 0; this.rollCd = 0; this.rollDir = 1;
+      this.hurtT = 0;
+    }
+
+    /**
+     * Take a hit from a creature, a guardian or their shots. In the open
+     * world heroes have hearts; elsewhere (and from spikes, lasers and pits)
+     * a hit is still a fall. Returns true if it landed.
+     */
+    hurt(level, dmg, fromX) {
+      if (this.dead || this.invuln > 0 || this.rollT > 0) return false;
+      if (!level || !level.healthMode) { this.kill(level, "creature"); return true; }
+      this.hp -= dmg || 1;
+      this.invuln = 1.1; this.hurtT = 0.35;
+      const dir = Math.sign(this.cx - (fromX == null ? this.cx - this.facing : fromX)) || -this.facing;
+      this.vx = dir * 260; this.vy = -300; this._noCut = true; this.onGround = false;
+      this.swing = null; if (this.teleHold) this.teleHold.dropTele && this.teleHold.dropTele();
+      GG.bus.emit("hit:stop", { s: 0.07 });
+      GG.bus.emit("player:hurt", { index: this.index, hp: this.hp });
+      if (GG.input && GG.input.rumble) GG.input.rumble(this.index, 0.7, 0.4, 160);
+      level.cam.shake(0.22);
+      level.fx.burst({ x: this.cx, y: this.cy, count: 14, color: ["#ff6b6b", "#fff", this.character.body], speed: 170, life: 0.4, glow: true });
+      if (this.hp <= 0) this.kill(level, "creature");
+      return true;
     }
 
     kill(level, reason) {
@@ -129,6 +168,7 @@
       GG.bus.emit("hit:stop", { s: 0.1 });        // the world holds its breath
       if (level && level.cam) level.cam.shake(0.25);
       GG.bus.emit("player:death", { index: this.index, reason });
+      if (GG.input && GG.input.rumble) GG.input.rumble(this.index, 1, 0.6, 280);
       if (level) {
         level.deaths++;
         level.fx.burst({ x: this.cx, y: this.cy, count: 26, color: [this.character.body, "#fff", this.character.dark], speed: 220, life: 0.6, gravity: 500, glow: true });
@@ -148,7 +188,8 @@
 
       const inp = this.input;
       const dir = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
-      if (dir !== 0) this.facing = dir;
+      if (dir !== 0 && !(this.rollT > 0)) this.facing = dir;
+      this._updateCombat(dt, level, inp, dir);
 
       // Surface under feet affects friction / conveyor push.
       let friction = FRICTION;
@@ -165,18 +206,34 @@
       const dashing = this.dashTime > 0;
 
       // Horizontal accel / friction (crawling and carrying slow you down).
-      const accel = this.onGround ? MOVE : AIR;
-      const speedCap = MAX_SPD * (this.crawling ? 0.55 : 1) * (this.carrying ? CARRY_SLOW : 1);
-      if (dashing) {
+      const feel = this.character.feel || { accel: 1, air: 1, turn: 1, stop: 1, maxFall: 900 };
+      let accel = this.onGround ? MOVE * feel.accel : AIR * feel.air;
+      // turning around bites harder for the light acrobat, softer for the engineer
+      if (dir !== 0 && Math.sign(this.vx) === -dir) accel *= 1 + feel.turn * 0.6;
+      if (this.swimming) accel *= 0.55;
+      const speedCap = MAX_SPD * (this.crawling ? 0.55 : 1) * (this.carrying ? CARRY_SLOW : 1) * (this.swimming ? 0.7 : 1);
+      if (this.onGround || dashing) this._momentum = false;
+      if (this.rollT > 0) {
+        this.vx = this.rollDir * ROLL_SPEED;            // a quick, low roll
+      } else if (dashing) {
         this.vx = this.dashDir * DASH_SPEED;
+      } else if (this._wasDashing) {
+        this.vx = U.clamp(this.vx, -speedCap, speedCap);            // a dash ends crisply
       } else if (dir !== 0) {
-        this.vx += dir * accel * dt;
-        this.vx = U.clamp(this.vx, -speedCap, speedCap);
+        if (this._momentum && Math.sign(this.vx) === dir && Math.abs(this.vx) > speedCap) {
+          // MOMENTUM: speed from a wall kick, a swing or a toss carries on and
+          // bleeds off gently instead of being clipped the instant you steer
+          this.vx = dir * Math.max(speedCap, Math.abs(this.vx) - 380 * dt);
+        } else {
+          this.vx += dir * accel * dt;
+          this.vx = U.clamp(this.vx, -speedCap, speedCap);
+        }
       } else if (this.onGround) {
         const s = Math.sign(this.vx);
-        this.vx -= s * friction * dt;
+        this.vx -= s * friction * feel.stop * dt;
         if (Math.sign(this.vx) !== s) this.vx = 0;
       }
+      this._wasDashing = dashing;
 
       // Refill jumps when grounded (enables Lyra's mid-air double jump).
       if (this.onGround) this.jumpsLeft = this.character.maxJumps;
@@ -190,6 +247,7 @@
       const canWall = wantJump && this._wallSliding && !this.onGround && this.character.canWallJump !== false;
       const canAir = wantJump && !this.onGround && this._coyote <= 0 && this.jumpsLeft > 0 && this.character.maxJumps > 1;
 
+      if (canGround && this.rollT > 0) { this.rollT = 0; this.vx = U.clamp(this.vx, -MAX_SPD, MAX_SPD); }
       if (canGround) {
         // A partner standing on your head weighs you down: you still jump,
         // just noticeably lower — and your rider is carried up with you.
@@ -207,6 +265,8 @@
         // Kick away from the wall.
         this.vy = -JUMP_V * 0.92;
         this.vx = -this._wallDir * WALL_JUMP_VX;
+        this._momentum = true;
+        GG.bus.emit("player:walljump", { index: this.index });
         this.facing = -this._wallDir;
         this._buffer = 0; this._wallSliding = false;
         this.jumpsLeft = this.character.maxJumps - 1; this.squash = 1.2;
@@ -221,11 +281,18 @@
       }
 
       // Variable jump height: releasing up cuts the rise short.
-      if (!inp.up && this.vy < -180) this.vy = -180;
+      // (not while flung by a partner, a mushroom or rising air)
+      if (this.vy >= 0) this._noCut = false;
+      if (!inp.up && this.vy < -180 && !this._noCut) this.vy = -180;
 
       // Gravity (suspended during a dash).
       if (dashing) { this.vy = 0; }
-      else { this.vy += C.GRAVITY * dt; this.vy = Math.min(this.vy, 900); }
+      else if (this.swimming) {
+        // water: slow sinking, and JUMP is a swim stroke upward
+        this.vy += C.GRAVITY * 0.28 * dt; this.vy = Math.min(this.vy, 130);
+        if (inp.jumpPressed) { this.vy = -300; this._buffer = 0; GG.bus.emit("player:swim", { index: this.index }); level.fx.burst({ x: this.cx, y: this.y, count: 5, color: "#bfe8ff", speed: 50, life: 0.4 }); }
+      }
+      else { this.vy += C.GRAVITY * dt; this.vy = Math.min(this.vy, feel.maxFall || 900); }
 
       // Drop through one-way platforms by holding down.
       this.dropThrough = !!inp.down && !this.onGround ? true : (!!inp.down && this.groundRef && this.groundRef.oneWay);
@@ -239,6 +306,26 @@
       const dx = (this.vx + conveyor) * dt;
       GG.Physics.move(this, dx, this.vy * dt, solids);
       this._dx = this.x - px; this._dy = this.y - py; // delta (used to carry riders)
+      // a roll never carries you off a ledge at roll speed (it can't stretch a gap)
+      if (this.rollT > 0 && !this.onGround) { this.rollT = 0; this.vx = U.clamp(this.vx, -MAX_SPD, MAX_SPD); }
+
+      // LEDGE GRAB: brushing a ledge's lip with your feet a hair too low
+      // (a few pixels) catches it and hauls you up instead of sliding off.
+      if (!this.onGround && this.hitWallDir !== 0 && dir === this.hitWallDir && this.vy > -80 && !this.carrying) {
+        const tm = level.tilemap, T = C.TILE;
+        const col = this.hitWallDir > 0 ? Math.floor((this.x + this.w + 1) / T) : Math.floor((this.x - 1) / T);
+        const feet = this.y + this.h;
+        const row = Math.floor((feet - 1) / T);
+        const top = row * T;
+        if (tm.isSolid(col, row) && !tm.isSolid(col, row - 1) && !tm.isSolid(col, row - 2) && feet - top <= 3.5 && feet - top > 0) {
+          this.y = top - this.h - 0.01; this.vy = 0;
+          this.x += this.hitWallDir * 3;
+          this._ledgeT = 0.14; this.squash = 0.8;
+          GG.bus.emit("player:ledge", { index: this.index });
+          level.fx.burst({ x: this.cx + this.hitWallDir * 8, y: top, count: 5, color: "#cfd8ff", speed: 40, life: 0.25 });
+        }
+      }
+      this._ledgeT = Math.max(0, (this._ledgeT || 0) - dt);
 
       // Wall-slide detection: airborne, pressing into a wall, descending.
       this._wallDir = this.hitWallDir;
@@ -262,8 +349,14 @@
           color: "#cfd8ff", speed: 70 + this._fallSpeed * 0.1, life: 0.32,
           angle: -Math.PI / 2, spread: 1.5,
         });
-        if (hard) level.cam.shake(0.18);
-        else if (this._fallSpeed > 380) level.cam.shake(0.06);
+        const heavy = this.character.feel && this.character.feel.heavy;
+        if (hard) level.cam.shake(heavy ? 0.26 : 0.14);
+        else if (this._fallSpeed > 380) level.cam.shake(heavy ? 0.1 : 0.04);
+        if (level.cam.kick) level.cam.kick(Math.min(14, this._fallSpeed / (heavy ? 55 : 80)));
+        if (heavy && this._fallSpeed > 380) {
+          level.fx.burst({ x: this.cx, y: this.y + this.h, count: 8, color: ["#8a7a66", "#b8a888"], speed: 90, life: 0.4, angle: -Math.PI / 2, spread: 2.6, gravity: 300 });
+          GG.bus.emit("player:thud", { index: this.index });
+        }
       }
       this._wasGround = this.onGround;
 
@@ -271,6 +364,8 @@
       this._stepT = (this._stepT || 0) - dt;
       if (this.onGround && Math.abs(this.vx) > 150 && this._stepT <= 0) {
         this._stepT = 0.16;
+        const tid = level.tilemap.tileAtWorld(this.cx, this.y + this.h + 2);
+        GG.bus.emit("player:step", { index: this.index, surface: tid === GG.TILE.ICE ? "ice" : (level.theme || "cave"), heavy: !!(this.character.feel && this.character.feel.heavy) });
         level.fx.burst({
           x: this.cx - this.facing * 6, y: this.y + this.h,
           count: 2, color: "#cfd8ff", speed: 38, life: 0.24,
@@ -286,6 +381,8 @@
 
       // Squash/stretch easing back to 1.
       this.squash = U.damp(this.squash, 1, 12, dt);
+      // a shared cheer (high-five at a shrine) wears off
+      if (this._cheerT > 0) { this._cheerT -= dt; if (this._cheerT <= 0) { this.celebrating = false; } }
 
       // Advance animation state.
       const prev = this.animName;
@@ -357,6 +454,38 @@
       }
     }
 
+    // ---- Combat: strike and roll --------------------------------------
+    _updateCombat(dt, level, inp, dir) {
+      this.invuln = Math.max(0, (this.invuln || 0) - dt);
+      this.spawnFx = Math.max(0, (this.spawnFx || 0) - dt);
+      this.hurtT = Math.max(0, (this.hurtT || 0) - dt);
+      this.meleeT = Math.max(0, (this.meleeT || 0) - dt);
+      this.meleeCd = Math.max(0, (this.meleeCd || 0) - dt);
+      this.rollT = Math.max(0, (this.rollT || 0) - dt);
+      this.rollCd = Math.max(0, (this.rollCd || 0) - dt);
+      const busy = this.carrying || this.teleHold || this.swing || this.celebrating;
+      // STRIKE: a short swing in front of you (Level resolves what it hits)
+      if (inp.meleePressed && this.meleeCd <= 0 && !busy) {
+        this.meleeT = MELEE_TIME; this.meleeCd = MELEE_CD; this._meleeFresh = true;
+        this.squash = 1.08;
+        GG.bus.emit("player:melee", { index: this.index });
+      }
+      // ROLL: a quick dodge along the ground; creatures can't touch you mid-roll
+      if (inp.dodgePressed && this.rollCd <= 0 && this.onGround && !busy && !this.crawling &&
+          (!level.spendEnergy || level.energy >= 12)) {
+        if (level.spendEnergy) level.spendEnergy(12);
+        this.rollT = ROLL_TIME; this.rollCd = 0.55; this.rollDir = dir || this.facing; this.facing = this.rollDir;
+        this.squash = 0.78;
+        GG.bus.emit("player:roll", { index: this.index });
+        level.fx.burst({ x: this.cx, y: this.y + this.h, count: 8, color: "#cfd8ff", speed: 80, life: 0.3, angle: -Math.PI / 2, spread: 1.4 });
+      }
+    }
+
+    /** The box a strike covers this frame (world space). */
+    meleeBox() {
+      return { x: this.facing > 0 ? this.x + this.w - 4 : this.x - 34, y: this.y - 6, w: 38, h: this.h + 10 };
+    }
+
     // ---- Abilities -------------------------------------------------------
     /**
      * Per-frame ability handling. Nichols: carry / charge-throw / grapple.
@@ -393,6 +522,20 @@
           this.facing = this.dashDir;
           GG.bus.emit("player:dash", { index: this.index });
           level.fx.burst({ x: this.cx, y: this.cy, count: 14, color: [ch.body, "#fff"], speed: 180, life: 0.32, glow: true, angle: this.dashDir > 0 ? Math.PI : 0, spread: 0.7 });
+        }
+      }
+
+      // --- Co-op TOSS: the engineer heaves a partner off his head ---------
+      const actEdge = inp.action && !this._prevAct;
+      this._prevAct = !!inp.action;
+      if (ch.feel && ch.feel.heavy && actEdge && this.onGround && !this.carrying) {
+        const rider = level.players.find(q => q !== this && !q.dead && q.groundRef === this);
+        if (rider) {
+          rider.vy = -560; rider.vx = this.facing * 230; rider._momentum = true; rider._noCut = true;
+          rider.onGround = false; rider.groundRef = null; rider.jumpsLeft = Math.max(rider.jumpsLeft, rider.character.maxJumps - 1);
+          rider.squash = 1.3; this.squash = 0.75; this._carryCool = 0.35;
+          GG.bus.emit("player:toss", { index: this.index });
+          level.fx.burst({ x: rider.cx, y: rider.y + rider.h, count: 12, color: [ch.body, "#fff"], speed: 120, life: 0.35, glow: true, angle: -Math.PI / 2, spread: 1 });
         }
       }
 
@@ -455,7 +598,7 @@
     _poseState() {
       if (this.dead) return "defeated";
       if (this.celebrating) return this.victoryPose || "celebrate";
-      if (this._wallSliding) return "climb";
+      if (this._wallSliding || this._ledgeT > 0) return "climb";
       if (!this.onGround) return this.vy < -30 ? "jump" : "fall";
       if (this.pushing) return "push";
       const spd = Math.abs(this.vx);
@@ -469,6 +612,20 @@
       const p = this, ch = p.character, pal = ch.pal;
       const st = p.animName, t = p.animTime;
       if (p.dead) ctx.globalAlpha = U.clamp(1 - p.deadTimer * 0.5, 0.25, 1);
+      // flicker while invulnerable after a hit
+      if (!p.dead && p.hurtT <= 0 && p.invuln > 0 && p.spawnFx <= 0 && Math.sin(p.invuln * 40) > 0.3) ctx.globalAlpha = 0.45;
+      // RESPAWN: a column of light, and the hero gathers back out of it
+      if (p.spawnFx > 0) {
+        const k = p.spawnFx / 0.6;
+        ctx.save(); ctx.globalCompositeOperation = "lighter";
+        const g = ctx.createLinearGradient(0, p.y - 120, 0, p.y + p.h);
+        g.addColorStop(0, "rgba(255,255,255,0)"); g.addColorStop(1, ch.light);
+        ctx.globalAlpha = k * 0.7; ctx.fillStyle = g; ctx.fillRect(p.cx - 10 * k - 4, p.y - 120, (10 * k + 4) * 2, 120 + p.h);
+        for (let i = 0; i < 6; i++) { const a = i * 1.05 + k * 6; ctx.fillStyle = "#fff"; ctx.fillRect(p.cx + Math.cos(a) * 26 * k, p.cy + Math.sin(a) * 26 * k, 2, 2); }
+        ctx.restore();
+        ctx.globalAlpha = 1 - k * 0.8;
+      }
+      if (p.hurtT > 0) ctx.globalAlpha = 0.6 + Math.sin(p.hurtT * 60) * 0.4;
 
       // ground shadow (soft)
       ctx.save();
@@ -483,6 +640,10 @@
       ctx.scale(p.facing, 1);
       const sqY = p.squash, sqX = 1 + (1 - p.squash) * 0.55;
       ctx.scale(sqX, sqY);
+      if (p.rollT > 0) {                                   // tuck and roll
+        const a = (1 - p.rollT / 0.24) * Math.PI * 2;
+        ctx.translate(0, -p.h * 0.45); ctx.rotate(a); ctx.scale(0.8, 0.8); ctx.translate(0, p.h * 0.45);
+      }
 
       // Pose parameters per state ---------------------------------------
       let legPhase = 0, legSpeed = 0, armSwing = 0, lean = 0, bob = 0, crouch = 0;
@@ -585,6 +746,9 @@
         }
       }
 
+      // === OUTFIT: a hat or trinket bought from the merchant ==========
+      if (p.outfit && GG.OUTFITS && GG.OUTFITS[p.outfit]) GG.OUTFITS[p.outfit].draw(ctx, H * VS, t, pal);
+
       // === FACE EXTRAS (floating "?" / sweat bead) ====================
       this._face(ctx, hx, headY, hh, W, pal, st);
 
@@ -597,6 +761,16 @@
 
       ctx.restore();
 
+      // --- the strike: a bright crescent in front of the hero -----------
+      if (this.meleeT > 0) {
+        const k = 1 - this.meleeT / 0.16;
+        ctx.save();
+        ctx.translate(this.cx, this.cy - 2); ctx.scale(this.facing, 1);
+        ctx.strokeStyle = ch.light; ctx.lineWidth = 4 * (1 - k) + 1; ctx.lineCap = "round";
+        ctx.shadowBlur = 12; ctx.shadowColor = ch.body; ctx.globalAlpha = 1 - k * 0.6;
+        ctx.beginPath(); ctx.arc(6, 0, 24, -1.2 + k * 0.6, 1.0 + k * 0.6); ctx.stroke();
+        ctx.restore();
+      }
       // --- ability feedback drawn in world space -------------------------
       if (this.grappleFx) {                       // grappling rope
         ctx.save();
@@ -618,12 +792,14 @@
 
     // For networking: compact authoritative state.
     getState() {
-      return { x: Math.round(this.x * 10) / 10, y: Math.round(this.y * 10) / 10, vx: this.vx, vy: this.vy, f: this.facing, d: this.dead ? 1 : 0 };
+      return { x: Math.round(this.x * 10) / 10, y: Math.round(this.y * 10) / 10, vx: this.vx, vy: this.vy, f: this.facing, d: this.dead ? 1 : 0,
+               hp: this.hp, mh: this.maxHp, iv: Math.round((this.invuln || 0) * 100), m: Math.round((this.meleeT || 0) * 100), r: Math.round((this.rollT || 0) * 100), o: this.outfit || 0 };
     }
     setState(s) {
       if (!s) return;
       this.x = s.x; this.y = s.y; this.vx = s.vx; this.vy = s.vy;
       this.facing = s.f; this.dead = !!s.d;
+      if (s.hp != null) { this.hp = s.hp; this.maxHp = s.mh; this.invuln = s.iv / 100; this.meleeT = s.m / 100; this.rollT = s.r / 100; this.outfit = s.o || null; }
     }
   }
 

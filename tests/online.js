@@ -17,7 +17,7 @@ const H = require("./harness.js");
 H.load([
   "core/utils.js", "core/events.js", "core/statemachine.js", "core/input.js", "core/storage.js", "core/camera.js", "core/particles.js",
   "core/weather.js", "entities/sprites.js", "world/objects.js", "world/creatures.js", "world/tilemap.js", "world/levels.js",
-  "world/worldgen.js", "world/level.js", "entities/player.js", "world/world.js", "net/network.js", "game.js",
+  "world/worldgen.js", "world/level.js", "world/decor.js", "world/guardians.js", "entities/player.js", "world/world.js", "net/network.js", "game.js",
 ]);
 const GG = global.GG;
 let pass = 0, fail = 0;
@@ -42,6 +42,14 @@ p1 = inp.snapshotOnline(0); p2 = inp.snapshotOnline(1);
 ok(p2.specialPressed && p2.attackPressed && p2.action && p2.down, "Player 2 has special, attack and action on R-Shift / . / ↓");
 ok(!p1.specialPressed && !p1.attackPressed && !p1.action, "…and Player 1 cannot trigger them");
 inp.endFrame(); ["ShiftRight", "Period", "ArrowDown"].forEach(release);
+press("KeyX"); press("ShiftLeft");
+p1 = inp.snapshotOnline(0); p2 = inp.snapshotOnline(1);
+ok(p1.meleePressed && p1.dodgePressed && !p2.meleePressed && !p2.dodgePressed, "Player 1 strikes (X) and rolls (L-Shift); Player 2 can't use those keys");
+inp.endFrame(); ["KeyX", "ShiftLeft"].forEach(release);
+press("Comma"); press("ControlRight");
+p1 = inp.snapshotOnline(0); p2 = inp.snapshotOnline(1);
+ok(p2.meleePressed && p2.dodgePressed && !p1.meleePressed && !p1.dodgePressed, "Player 2 strikes (,) and rolls (R-Ctrl); Player 1 can't use those keys");
+inp.endFrame(); ["Comma", "ControlRight"].forEach(release);
 // the game uses the right set for each role
 GG.game.role = "host"; press("ArrowRight"); ok(!GG.game._buildLocalInput().right, "host machine: arrows do nothing"); inp.endFrame(); release("ArrowRight");
 GG.game.role = "client"; press("KeyD"); ok(!GG.game._buildLocalInput().right, "client machine: WASD does nothing"); inp.endFrame(); release("KeyD");
@@ -50,6 +58,10 @@ GG.game.role = "client"; press("ArrowRight"); ok(GG.game._buildLocalInput().righ
 /* ---- 2. press counters --------------------------------------------- */
 GG.game._wireNet();
 const host = GG.net._handlers.input;
+GG.game._edgeBuf = [{}, {}]; GG.game._remoteSeen = null;
+host({ left: false, nj: 0, ns: 0, na: 0, np: 0, nm: 0, nd: 0 });
+host({ left: false, nj: 0, ns: 0, na: 0, np: 0, nm: 1, nd: 1 });
+ok(GG.game._edgeBuf[1].melee && GG.game._edgeBuf[1].dodge, "strike and roll presses survive dropped packets too");
 GG.game._edgeBuf = [{}, {}]; GG.game._remoteSeen = null;
 host({ left: false, nj: 0, ns: 0, na: 0, np: 0 });
 ok(!GG.game._edgeBuf[1].jump, "no press, no jump");
@@ -100,6 +112,35 @@ ok(cliLvl.players[0].character.canShoot === true, "client applies the journey's 
 let threw = null;
 try { cliLvl.renderWorld(H.el().getContext(), cliLvl.cam); } catch (e) { threw = e; }
 ok(!threw, "client renders the mirrored room " + (threw ? threw.stack : ""));
+
+/* ---- 4. a guardian fight and its escape, seen from the client ------- */
+{
+  GG.world.remote = false; GG.world.begin(true);
+  const shrine = W.rooms.find(r => r.kind === "shrine" && r.region === 2);
+  GG.world.state.powers = GG.WORLDGEN.POWER_ORDER.slice(0, 2);
+  const hL = GG.world.makeLevel(shrine.id, 0, cam(), new GG.Particles(10), [0, 1]);
+  hL.players.forEach((p, i) => { p.input = Object.assign({}, IDLE); p.x = (12 + i * 2) * 32; p.y = 16 * 32 - p.h - 1; p.invuln = 99; });
+  for (let i = 0; i < 900; i++) hL.step(1 / 120);                  // the Thorn Queen wakes and summons
+  const gd = hL.objects.find(o => o.guardian);
+  const inf2 = GG.world.syncInfo(), sn2 = JSON.parse(JSON.stringify(hL.snapshot()));
+  GG.world.state = null; GG.world.mirror(inf2);
+  const cL = GG.world.makeLevel(inf2.room, 0, cam(), new GG.Particles(10), [0, 1]);
+  cL.applySnapshot(sn2);
+  const cg = cL.objects.find(o => o.guardian);
+  ok(gd.awake && cg.st === gd.st && Math.abs(cg.hp - gd.hp) < 0.01, `client sees the guardian fight (${cg.st}, hp ${Math.round(cg.hp)})`);
+  const hostDyn = hL.objects.filter(o => o.minionOf != null).length;
+  ok(cL.objects.filter(o => o.minionOf != null || (hL.byId(o.id) && hL.byId(o.id).minionOf != null)).length >= hostDyn, `summoned minions appear on the client too (${hostDyn})`);
+  // escape: the host claims, the client sees the wall coming
+  GG.world.remote = false; GG.world.state = GG.world.state || {}; 
+  gd.takeHit(hL, 9999, 1);
+  const esc = hL.objects.find(o => o instanceof GG.obj.EscapeRun);
+  hL.setChannel(esc.channel, true);
+  for (let i = 0; i < 480; i++) hL.step(1 / 120);
+  cL.applySnapshot(JSON.parse(JSON.stringify(hL.snapshot())));
+  const ce = cL.objects.find(o => o instanceof GG.obj.EscapeRun);
+  ok(esc.state === 1 && ce.state === 1 && Math.abs(ce.front - esc.front) < 2, "client sees the escape wall where the host has it");
+  ok(esc.saveState() === 2, "an escape in progress saves as done (you left through the door)");
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

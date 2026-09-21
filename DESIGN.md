@@ -33,9 +33,40 @@ an unreachable shelf level with Nichols' ledge · swing → lever island past an
 climbs 3 tiles / clears 4; head-boost climbs 4; Sky Step climbs 6 / clears 6;
 Sky Step + Wind Dash clears 8.
 
+**Look, feel and region identity.** `decor.js` adds reactive flora, a
+foreground parallax layer, one landmark per region (placed at the region's
+centre in world space, seen through 0.1 parallax) and per-region light overlays.
+Region twists (`twist()` in worldgen) are only added to cells that are not
+gates, puzzles or power trials, so they can never bypass a power the critical
+path needs: tidal water (ruins), bounce mushrooms (wilds), steam vents and
+belts (ironworks), ice and gusts (frostpeak), updrafts (sky). New modules:
+`sunbeam` (temple onward: rotatable mirrors steer a harmless light beam into a
+sun crystal; either side's crystal opens the gate) and `heartbeat` (heart:
+level-clock synced blinkers over spikes). About 30% of cave rooms are dark.
+Movement additions (weight contrast, momentum, ledge grab within 3.5px, toss
+under 4 tiles, catch, swimming) were checked against the measured jump limits
+above, which are unchanged.
+
+**Adventure layer.** Hearts replace one-hit falls for creature damage only
+(hazards stay lethal, so every puzzle reads the same). Guardians sit in the
+shrine cell inside an ArenaSeal: the doorway seals while one is awake, fallen
+heroes revive inside, and a party wipe resets it. Each guardian cycles
+telegraphed attacks (slam, rain, volley, low/high sweep, charge, summon, swoop)
+and is dazed after each, taking double damage; shots aim-assist toward
+guardians and flyers. The shrine unlocks only after its guardian falls; claiming
+it starts an EscapeRun (a wall moving toward the only doorway at 175 to 245 px/s,
+slower after each failed attempt, with rubble and marked falling debris). The
+strike never hits thorn barriers (they still need Aether Arms), and the ground
+roll ends the moment you leave the ground at normal run speed, so neither
+changes the measured jump limits. Upgrades are planned once per world
+(`planExtras`): per region the first dead-end hoard hides a Heart Crystal and a
+later one an Energy Cell, and every hidden vault holds one more; tests check
+each is reachable. NPCs, the merchant and thief sightings are placed on bare
+floor away from doorways.
+
 **Verification.** `tests/world.js` (two-hero reachability solver with staged
 channels, gates sealed/opened, return trips, idle safety, render),
-`tests/powers.js` (physics bots perform each trial), `tests/online.js`.
+`tests/powers.js` (physics bots perform each trial and beat guardians), `tests/online.js`, `tests/journey.js`.
 
 ---
 

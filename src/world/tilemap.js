@@ -96,7 +96,7 @@
      * surfaces get grass/snow/gold trim where exposed, and the whole static
      * layer is baked once into an offscreen canvas and blitted per frame.
      */
-    setStyle(style) { this.style = style; this._cache = null; }
+    setStyle(style, theme) { this.style = style; this.styleTheme = theme || null; this._cache = null; }
 
     _bake() {
       const t = this.tile, st = this.style;
@@ -115,6 +115,8 @@
           cx.fillStyle = id === 1 ? st.ground : st.rock;
           if (deep) cx.fillStyle = st.deep || cx.fillStyle;
           cx.fillRect(x, y, t, t);
+          // the region's own stonework
+          this._pattern(cx, this.styleTheme, x, y, t, c, r, h, deep);
           // texture flecks
           cx.fillStyle = st.fleck;
           cx.fillRect(x + (h % 22) + 3, y + ((h >> 3) % 20) + 5, 3, 2);
@@ -125,16 +127,112 @@
           if (open(c + 1, r)) { cx.fillStyle = st.edge; cx.fillRect(x + t - 3, y, 3, t); }
           if (open(c, r + 1)) { cx.fillStyle = st.edge; cx.fillRect(x, y + t - 3, t, 3);
             if (st.drip && h % 5 === 0) { cx.fillStyle = st.drip; cx.fillRect(x + (h % 24) + 4, y + t, 3, 4 + (h % 5)); } }
+          // a soft bevel: lit just inside exposed left faces, shaded under the lip
+          if (open(c - 1, r)) { cx.fillStyle = "rgba(255,255,255,0.07)"; cx.fillRect(x + 3, y, 2, t); }
+          if (open(c, r + 1)) { cx.fillStyle = "rgba(0,0,0,0.18)"; cx.fillRect(x, y + t - 6, t, 3); }
           if (open(c, r - 1)) {
             cx.fillStyle = st.top; cx.fillRect(x, y, t, 6);
             cx.fillStyle = st.grass; cx.fillRect(x, y, t, 3);
             if (st.tuft && h % 4 === 0) { cx.fillStyle = st.tuft; cx.fillRect(x + (h % 26) + 2, y - 3, 2, 3); cx.fillRect(x + (h % 26) + 5, y - 5, 2, 5); }
+            this._cap(cx, this.styleTheme, x, y, t, h);
           }
+          // round off exposed outer corners so the terrain reads organic
+          const R = 7;
+          cx.save(); cx.globalCompositeOperation = "destination-out";
+          const cut = (ax, ay, sx, sy) => { cx.beginPath(); cx.moveTo(ax, ay); cx.lineTo(ax + sx * R, ay); cx.quadraticCurveTo(ax, ay, ax, ay + sy * R); cx.closePath(); cx.fill(); };
+          if (open(c, r - 1) && open(c - 1, r) && open(c - 1, r - 1)) cut(x, y, 1, 1);
+          if (open(c, r - 1) && open(c + 1, r) && open(c + 1, r - 1)) cut(x + t, y, -1, 1);
+          if (open(c, r + 1) && open(c - 1, r) && open(c - 1, r + 1)) cut(x, y + t, 1, -1);
+          if (open(c, r + 1) && open(c + 1, r) && open(c + 1, r + 1)) cut(x + t, y + t, -1, -1);
+          cx.restore();
         } else {
           this._drawTile(cx, id, x, y, t, c, r);
         }
       }
       return cv;
+    }
+
+    /** Per-region stone patterns, baked once (world-aligned so they tile). */
+    _pattern(cx, theme, x, y, t, c, r, h, deep) {
+      cx.save();
+      cx.beginPath(); cx.rect(x, y, t, t); cx.clip();
+      switch (theme) {
+        case "cave": {                        // layered strata with a crystal glint
+          cx.fillStyle = "rgba(0,0,0,0.16)";
+          const o = (r * 11) % 7;
+          cx.fillRect(x, y + 8 + o, t, 2); cx.fillRect(x, y + 20 + (o >> 1), t, 1);
+          if (h % 17 === 0) { cx.fillStyle = "rgba(110,240,208,0.45)"; cx.beginPath(); cx.moveTo(x + 12, y + 20); cx.lineTo(x + 15, y + 12); cx.lineTo(x + 18, y + 20); cx.fill(); }
+          break;
+        }
+        case "ruins": {                       // sunken brickwork, mossy mortar
+          cx.fillStyle = "rgba(0,0,0,0.22)";
+          for (let k = 0; k < 2; k++) {
+            const by = y + k * 16; cx.fillRect(x, by + 15, t, 1);
+            const off = ((r * 2 + k) % 2) * 16; cx.fillRect(x + off, by, 1, 16);
+          }
+          if (h % 7 === 0) { cx.fillStyle = "rgba(106,168,138,0.35)"; cx.fillRect(x + (h % 20), y + 15, 10, 2); }
+          break;
+        }
+        case "forest": {                      // packed earth threaded with roots
+          cx.strokeStyle = "rgba(120,80,40,0.35)"; cx.lineWidth = 2;
+          if (h % 3 !== 0) { cx.beginPath(); cx.moveTo(x, y + 10 + (h % 12)); cx.quadraticCurveTo(x + 16, y + (h % 20), x + t, y + 14 + (h % 10)); cx.stroke(); }
+          cx.fillStyle = "rgba(0,0,0,0.18)";
+          cx.beginPath(); cx.arc(x + (h % 24) + 4, y + ((h >> 4) % 20) + 6, 2.5, 0, 6.28); cx.fill();
+          break;
+        }
+        case "factory": {                     // riveted steel plates
+          cx.fillStyle = "rgba(255,255,255,0.06)"; cx.fillRect(x + 1, y + 1, t - 2, 1); cx.fillRect(x + 1, y + 1, 1, t - 2);
+          cx.fillStyle = "rgba(0,0,0,0.3)"; cx.fillRect(x, y + t - 1, t, 1); cx.fillRect(x + t - 1, y, 1, t);
+          cx.fillStyle = "rgba(255,200,150,0.28)";
+          for (const [a, b] of [[4, 4], [t - 6, 4], [4, t - 6], [t - 6, t - 6]]) cx.fillRect(x + a, y + b, 2, 2);
+          if (h % 11 === 0) { cx.fillStyle = "rgba(255,154,77,0.18)"; cx.fillRect(x + 6, y + 14, t - 12, 3); }
+          break;
+        }
+        case "ice": {                         // glassy sheen streaks
+          cx.strokeStyle = "rgba(255,255,255,0.14)"; cx.lineWidth = 2;
+          cx.beginPath(); cx.moveTo(x + (h % 16), y + t); cx.lineTo(x + (h % 16) + 14, y); cx.stroke();
+          if (h % 2) { cx.lineWidth = 1; cx.beginPath(); cx.moveTo(x + (h % 16) + 8, y + t); cx.lineTo(x + (h % 16) + 20, y); cx.stroke(); }
+          break;
+        }
+        case "temple": {                      // big dressed blocks with carved glyphs
+          cx.fillStyle = "rgba(0,0,0,0.2)"; cx.fillRect(x, y + t - 2, t, 2); cx.fillRect(x + ((r % 2) ? 0 : t / 2), y, 2, t);
+          cx.fillStyle = "rgba(255,230,160,0.08)"; cx.fillRect(x, y, t, 2);
+          if (h % 13 === 0 && !deep) { cx.strokeStyle = "rgba(255,207,77,0.35)"; cx.lineWidth = 1.5; cx.strokeRect(x + 10, y + 10, 12, 12); cx.beginPath(); cx.moveTo(x + 16, y + 10); cx.lineTo(x + 16, y + 22); cx.stroke(); }
+          break;
+        }
+        case "city": {                        // pale marble with soft veins
+          cx.strokeStyle = "rgba(255,255,255,0.12)"; cx.lineWidth = 1;
+          cx.beginPath(); cx.moveTo(x, y + (h % 30)); cx.bezierCurveTo(x + 10, y + (h % 12), x + 20, y + 26, x + t, y + ((h >> 3) % 30)); cx.stroke();
+          cx.fillStyle = "rgba(0,0,0,0.12)"; cx.fillRect(x, y + t - 1, t, 1); cx.fillRect(x + t - 1, y, 1, t);
+          break;
+        }
+        case "heart": {                       // living rock with glowing veins
+          cx.strokeStyle = "rgba(199,155,255,0.30)"; cx.lineWidth = 1.5;
+          if (h % 2 === 0) { cx.beginPath(); cx.moveTo(x, y + (h % 28) + 2); cx.quadraticCurveTo(x + 16, y + ((h >> 2) % 32), x + t, y + ((h >> 5) % 28) + 2); cx.stroke(); }
+          break;
+        }
+      }
+      cx.restore();
+    }
+
+    /** What sits on an exposed top: snow caps, gold trim, moss… */
+    _cap(cx, theme, x, y, t, h) {
+      if (theme === "ice") {
+        cx.fillStyle = "#f4fbff";
+        cx.beginPath(); cx.moveTo(x, y + 4);
+        for (let k = 0; k <= 4; k++) cx.quadraticCurveTo(x + k * 8 - 4, y - 3 - ((h >> k) % 3), x + k * 8, y + 3);
+        cx.lineTo(x + t, y + 5); cx.lineTo(x, y + 5); cx.fill();
+      } else if (theme === "temple") {
+        cx.fillStyle = "#ffcf4d"; cx.fillRect(x, y + 5, t, 1);
+        cx.fillStyle = "rgba(255,207,77,0.5)"; cx.fillRect(x, y + 7, t, 1);
+      } else if (theme === "ruins" && h % 3 === 0) {
+        cx.fillStyle = "rgba(90,160,120,0.8)"; cx.fillRect(x + (h % 12), y + 3, 12, 3 + (h % 3));
+      } else if (theme === "factory") {
+        cx.fillStyle = "rgba(0,0,0,0.35)";
+        for (let k = 0; k < 4; k++) cx.fillRect(x + k * 8 + 2, y + 1, 4, 1);    // tread plate
+      } else if (theme === "heart" && h % 4 === 0) {
+        cx.fillStyle = "rgba(224,200,255,0.8)"; cx.beginPath(); cx.arc(x + (h % 24) + 4, y + 1, 2, 0, 6.28); cx.fill();
+      }
     }
 
     render(ctx, cam) {

@@ -33,7 +33,11 @@
       super(Object.assign({}, defaults, cfg));
       this.x0 = this.x; this.y0 = this.y;
       this.hp = this.hp * (cfg.tough || 1);
+      // ELITES: tougher, glowing, and they drop extra gems
+      if (cfg.elite) { this.elite = true; this.hp *= 2.2; }
       this.maxHp = this.hp;
+      this.bites = true;                     // contact hurts (hearts) rather than kills outright
+      this.stunT = 0; this.stunBy = null;
       this.alive = true; this.hittable = true;
       this.t = (cfg.seed || 0) * 1.37; this._flash = 0;
       this.dir = cfg.dir || -1; this.vx = 0; this.vy = 0;
@@ -42,9 +46,20 @@
     get cx() { return this.x + this.w / 2; }
     get cy() { return this.y + this.h / 2; }
     kills() { return this.alive && this.awake !== false; }
-    takeHit(level, dmg, fromDir) {
+    takeHit(level, dmg, fromDir, by, melee) {
       if (!this.alive) return;
-      this.hp -= dmg || 1; this._flash = 0.18;
+      let d = dmg || 1;
+      // CO-OP COMBO: one hero dazes a creature, the OTHER lands the finisher
+      if (by != null && this.stunT > 0 && this.stunBy != null && this.stunBy !== by) {
+        d *= 3; this.stunT = 0; this.stunBy = null;
+        level.floatText(this.cx, this.y - 12, "COMBO!", "#ffe79a");
+        GG.bus.emit("combo:finisher", { x: this.cx, y: this.y });
+        if (level.onCombo) level.onCombo(this);
+        level.fx.burst({ x: this.cx, y: this.cy, count: 24, color: ["#ffe79a", "#fff", "#ff9aa4"], speed: 220, life: 0.5, glow: true });
+      } else if (by != null && !this.stunImmune) {
+        this.stunT = melee ? 1.0 : 0.7; this.stunBy = by;
+      }
+      this.hp -= d; this._flash = 0.18;
       if (!this.flying) this.vx = (fromDir || 0) * 120;
       GG.bus.emit("hit:stop", { s: this.hp <= 0 ? 0.08 : 0.04 });
       level.fx.burst({ x: this.cx, y: this.cy, count: 8, color: [this.blood || "#ffb36b", "#fff"], speed: 110, life: 0.3 });
@@ -52,13 +67,17 @@
       else if (this.onHurt) this.onHurt(level, fromDir);
     }
     die(level) {
-      this.alive = false;
-      GG.bus.emit("creature:slain", { kind: this.constructor.name });
+      this.alive = false; this.stunT = 0;
+      GG.bus.emit("creature:slain", { kind: this.constructor.name, elite: !!this.elite });
+      if (this.elite) {
+        level.floatText(this.cx, this.y - 6, "+3 ◆", "#ffcf4d");
+        GG.bus.emit("gems:bonus", { n: 3 });
+      }
       level.cam.shake(0.12);
       level.fx.burst({ x: this.cx, y: this.cy, count: 20, color: [this.blood || "#ffb36b", "#fff", "#3a2b44"], speed: 170, life: 0.55, gravity: 420, glow: true });
     }
     reset() {
-      this.alive = true; this.hp = this.maxHp; this.x = this.x0; this.y = this.y0;
+      this.alive = true; this.hp = this.maxHp; this.x = this.x0; this.y = this.y0; this.stunT = 0;
       this.vx = 0; this.vy = 0; this.st = "idle"; this.stT = 0;
     }
     /** Nearest living hero within `range` (and |dy| < yTol). */
@@ -104,11 +123,11 @@
     }
     flashAlpha(ctx) { if (this._flash > 0) ctx.globalAlpha = 0.55 + Math.sin(this._flash * 70) * 0.45; }
     getState() {
-      return { x: Math.round(this.x), y: Math.round(this.y), h: Math.round(this.hp * 10) / 10, a: this.alive ? 1 : 0, s: this.st, d: this.dir, k: Math.round(this.stT * 100) };
+      return { x: Math.round(this.x), y: Math.round(this.y), h: Math.round(this.hp * 10) / 10, a: this.alive ? 1 : 0, s: this.st, d: this.dir, k: Math.round(this.stT * 100), z: Math.round((this.stunT || 0) * 10) };
     }
     setState(s) {
       if (!s) return;
-      this.x = s.x; this.y = s.y; this.hp = s.h; this.alive = !!s.a; this.st = s.s; this.dir = s.d; this.stT = (s.k || 0) / 100;
+      this.x = s.x; this.y = s.y; this.hp = s.h; this.alive = !!s.a; this.st = s.s; this.dir = s.d; this.stT = (s.k || 0) / 100; this.stunT = (s.z || 0) / 10;
     }
   }
 
@@ -225,7 +244,7 @@
           case "fire": {
             const b = this.beam = Object.assign(this._beamEnd(level), { live: true });
             const rect = { x: Math.min(b.x0, b.x1), y: b.y - 4, w: Math.abs(b.x1 - b.x0), h: 8 };
-            for (const p of level.players) if (!p.dead && U.aabb(p, rect)) p.kill(level, "laser");
+            for (const p of level.players) if (!p.dead && U.aabb(p, rect)) p.hurt(level, 1, this.cx);
             if (this.stT > this.fire) this.setMode("idle");
             break;
           }
@@ -489,7 +508,7 @@
    * once broken it stays broken.
    * ------------------------------------------------------------------- */
   class Barrier extends GObj {
-    constructor(cfg) { super(Object.assign({ w: T, h: T * 4, hp: 6 }, cfg)); this.maxHp = this.hp; this.alive = true; this.hittable = true; this.dynSolid = true; this.t = 0; this._flash = 0; }
+    constructor(cfg) { super(Object.assign({ w: T, h: T * 4, hp: 6 }, cfg)); this.maxHp = this.hp; this.alive = true; this.hittable = true; this.meleeProof = true; this.dynSolid = true; this.t = 0; this._flash = 0; }
     takeHit(level, dmg) {
       if (!this.alive) return;
       this.hp -= dmg || 1; this._flash = 0.15;
@@ -538,20 +557,33 @@
     update(dt, level) {
       this.t += dt;
       if (this.taken) return;
+      // a guarded shrine wakes only once its guardian has fallen
+      this.locked = this.guardCh != null && !level.getChannel(this.guardCh);
+      if (this.locked) { this.near = 0; return; }
       let n = 0;
       for (const p of level.players) if (!p.dead && Math.hypot(p.cx - this.cx, p.cy - this.cy) < 90) n++;
       this.near = n;
       if (n >= 2) {
         this.taken = true;
+        if (this.escCh) level.setChannel(this.escCh, true);          // …and the region wants you OUT
         level.cam.shake(0.45);
         level.fx.burst({ x: this.cx, y: this.cy - 20, count: 70, color: [this.tint, "#fff", "#7fd4ff"], speed: 260, life: 1.1, glow: true });
-        for (const p of level.players) if (p.feel) p.feel("excited", 2.5);
+        // HIGH FIVE: both heroes cheer together, a spark between their hands
+        for (const p of level.players) { if (p.feel) p.feel("laughing", 2.5); p.celebrating = true; p.victoryPose = "celebrate"; p._cheerT = 1.6; }
+        const [a, b] = level.players;
+        level.fx.burst({ x: (a.cx + b.cx) / 2, y: Math.min(a.y, b.y) - 6, count: 26, color: ["#fff", "#ffe79a", a.character.body, b.character.body], speed: 180, life: 0.6, glow: true });
+        GG.bus.emit("player:highfive", {});
         GG.bus.emit("power:gained", { power: this.power });
         if (level.onPower) level.onPower(this.power);
       }
     }
     render(ctx) {
       const x = this.cx, by = this.y + this.h;
+      if (this.locked) {                                  // sealed: just a dark pedestal
+        ctx.fillStyle = "#2a2538"; ctx.fillRect(x - 26, by - 10, 52, 10);
+        ctx.fillStyle = "#34304a"; ctx.fillRect(x - 18, by - 26, 36, 16);
+        return;
+      }
       ctx.save();
       // light column
       if (!this.taken) {
@@ -687,11 +719,29 @@
           this.state = 1; GG.bus.emit("arena:start", {}); level.cam.shake(0.3);
         }
       } else if (this.state === 1 && alive === 0) {
-        this.state = 2; GG.bus.emit("arena:clear", {});
+        this.state = 2; GG.bus.emit("arena:clear", { boss: !!this.boss });
         level.fx.burst({ x: this.cx, y: this.cy, count: 40, color: ["#ffe79a", "#fff"], speed: 200, life: 0.9, glow: true });
       }
       for (const m of mem) m.awake = this.state === 1;
       level.setChannel(this.channel, this.state === 1);
+      if (this.doneChannel) level.setChannel(this.doneChannel, this.state === 2);
+      // a guardian fight: fallen heroes revive INSIDE the sealed arena
+      if (this.boss) {
+        if (this.state === 1 && !this._spawnsMoved) {
+          this._spawnsMoved = level.players.map(p => p.spawn);
+          level.players.forEach((p, i) => {
+            p.spawn = { x: this.inX + i * 30, y: this.inY - p.h - 1 };
+            // a hero left standing outside is swept in with their partner
+            if (!p.dead && !(p.x > this.x && p.x + p.w < this.x + this.w)) {
+              level.fx.burst({ x: p.cx, y: p.cy, count: 12, color: ["#fff", p.character.body], speed: 120, life: 0.4, glow: true });
+              p.x = p.spawn.x; p.y = p.spawn.y; p.vx = p.vy = 0;
+            }
+          });
+        } else if (this.state !== 1 && this._spawnsMoved) {
+          level.players.forEach((p, i) => { p.spawn = this._spawnsMoved[i]; });
+          this._spawnsMoved = null;
+        }
+      }
     }
     onPartyWipe(level) {
       if (this.state !== 1) return;
@@ -703,7 +753,7 @@
         ctx.save(); ctx.textAlign = "center";
         ctx.globalAlpha = 0.75 + Math.sin(this.t * 6) * 0.25;
         ctx.font = "700 12px 'Cinzel', Georgia, serif"; ctx.fillStyle = "#ff8a8a";
-        ctx.fillText("✦ Defeat the beasts! ✦", this.cx, this.y + 40);
+        if (!this.boss) ctx.fillText("✦ Defeat the beasts! ✦", this.cx, this.y + 40);
         ctx.restore();
       }
     }
@@ -740,10 +790,177 @@
     }
   }
 
+
+  /* ---------------------------------------------------------------------
+   * Water — a pool you swim in (JUMP = a stroke upward). Tidal pools rise
+   * and fall on a slow clock shared with the level timer, so a high tide can
+   * float you up to ledges that are out of reach at low tide.
+   * ------------------------------------------------------------------- */
+  class Water extends GObj {
+    constructor(cfg) { super(Object.assign({ tide: 0, period: 10, phase: 0 }, cfg)); this.bottom = this.y + this.h; this.t = 0; this._in = new Set(); }
+    level(lvl) {
+      if (!this.tide) return this.y;
+      const k = (Math.sin(((lvl.timeMs || 0) / 1000 + this.phase) / this.period * Math.PI * 2) + 1) / 2;
+      return this.y - this.tide * k;                         // surface y
+    }
+    affectPlayers(lvl, dt) {
+      this.t += dt;
+      const top = this.level(lvl);
+      const zone = { x: this.x, y: top, w: this.w, h: this.bottom - top };
+      for (const p of lvl.players) {
+        if (p.dead) continue;
+        const inNow = p.y + p.h * 0.55 > top && U.aabb(p, zone);
+        if (inNow) p.swimming = true;
+        const was = this._in.has(p);
+        if (inNow !== was) {
+          if (inNow) this._in.add(p); else this._in.delete(p);
+          if (Math.abs(p.vy) > 120 || inNow) {
+            GG.bus.emit("water:splash", {});
+            lvl.fx.burst({ x: p.cx, y: top, count: 14, color: ["#bfe8ff", "#ffffff", "#7fd4ff"], speed: 150, life: 0.5, angle: -Math.PI / 2, spread: 1.2, gravity: 500 });
+          }
+        }
+      }
+    }
+    render(ctx, lvl) {
+      const top = this.level(lvl), h = this.bottom - top, t = (lvl.timeMs || 0) / 1000;
+      ctx.save();
+      const g = ctx.createLinearGradient(0, top, 0, this.bottom);
+      g.addColorStop(0, "rgba(90,190,230,0.45)"); g.addColorStop(1, "rgba(20,60,110,0.65)");
+      ctx.fillStyle = g; ctx.fillRect(this.x, top, this.w, h);
+      // caustic ripples
+      ctx.strokeStyle = "rgba(220,250,255,0.18)"; ctx.lineWidth = 1;
+      for (let y = top + 10; y < this.bottom; y += 14) {
+        ctx.beginPath();
+        for (let x = this.x; x <= this.x + this.w; x += 8) ctx.lineTo(x, y + Math.sin(x * 0.05 + t * 2 + y) * 2);
+        ctx.stroke();
+      }
+      // the surface
+      ctx.strokeStyle = "rgba(230,250,255,0.85)"; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let x = this.x; x <= this.x + this.w; x += 6) ctx.lineTo(x, top + Math.sin(x * 0.07 + t * 3) * 1.6);
+      ctx.stroke();
+      ctx.restore();
+    }
+    getState() { return null; }
+  }
+
+  /* ---------------------------------------------------------------------
+   * Updraft — a column of rising air (sky isles) or a steam vent that
+   * breathes on a timer (the ironworks). Ride it up.
+   * ------------------------------------------------------------------- */
+  class Updraft extends GObj {
+    constructor(cfg) { super(Object.assign({ lift: 2600, maxUp: 330, period: 0, on: 0, phase: 0, steam: false }, cfg)); this.t = 0; }
+    active(lvl) {
+      if (!this.period) return true;
+      return ((((lvl.timeMs || 0) / 1000 + this.phase) % this.period) + this.period) % this.period < this.on;
+    }
+    affectPlayers(lvl, dt) {
+      this.t += dt;
+      if (!this.active(lvl)) return;
+      for (const p of lvl.players) {
+        if (p.dead || p.swing || !U.aabb(p, this)) continue;
+        // stronger near the bottom of the column, fading toward its top
+        const k = U.clamp((p.y + p.h - this.y) / this.h, 0.15, 1);
+        // cancels gravity and then some near the vent, fading out toward the top
+        p.vy = Math.max(-this.maxUp, p.vy - (GG.C.GRAVITY * 1.05 + this.lift * (k - 0.3)) * dt); p._noCut = true;
+        if (p.onGround) { p.onGround = false; p.y -= 2; }
+      }
+    }
+    render(ctx, lvl) {
+      const on = this.active(lvl), t = (lvl.timeMs || 0) / 1000;
+      ctx.save();
+      if (this.steam) {                                      // the vent grate
+        ctx.fillStyle = "#3a3240"; ctx.fillRect(this.x, this.y + this.h - 8, this.w, 8);
+        ctx.fillStyle = on ? "#ff9a4d" : "#6a5a70";
+        for (let x = this.x + 3; x < this.x + this.w - 2; x += 7) ctx.fillRect(x, this.y + this.h - 6, 3, 4);
+      }
+      ctx.globalAlpha = on ? 0.5 : 0.1;
+      const c = this.steam ? "235,235,245" : "220,245,255";
+      for (let i = 0; i < 9; i++) {
+        const k = ((t * (this.steam ? 0.9 : 0.6) + i / 9) % 1);
+        const y = this.y + this.h * (1 - k);
+        const x = this.x + this.w * (0.2 + 0.6 * ((i * 37) % 10) / 10) + Math.sin(t * 3 + i) * 4;
+        ctx.fillStyle = `rgba(${c},${0.5 * Math.sin(k * Math.PI)})`;
+        ctx.beginPath(); ctx.arc(x, y, this.steam ? 6 + k * 8 : 2 + k * 2, 0, Math.PI * 2); ctx.fill();
+      }
+      if (!this.steam) {                                     // streaks of wind
+        ctx.strokeStyle = `rgba(${c},0.35)`; ctx.lineWidth = 1;
+        for (let i = 0; i < 4; i++) {
+          const x = this.x + (i + 0.5) * this.w / 4, y = this.y + ((t * 160 + i * 70) % this.h);
+          ctx.beginPath(); ctx.moveTo(x, y + 18); ctx.lineTo(x, y); ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+  }
+
+  /* ---------------------------------------------------------------------
+   * Bouncer — a springy forest mushroom. Land on it and it flings you up.
+   * ------------------------------------------------------------------- */
+  class Bouncer extends GObj {
+    constructor(cfg) { super(Object.assign({ w: T * 2, h: 18, power: 880 }, cfg)); this.dynSolid = true; this.squish = 0; this.t = 0; }
+    solidRect() { return { x: this.x, y: this.y + 4, w: this.w, h: this.h - 4, oneWay: true, _bouncer: this }; }
+    affectPlayers(lvl, dt) {
+      this.t += dt; this.squish = Math.max(0, this.squish - dt * 3);
+      for (const p of lvl.players) {
+        if (p.dead || !p.groundRef || p.groundRef._bouncer !== this) continue;
+        p.vy = -this.power; p.onGround = false; p.groundRef = null; p.y -= 3; p._noCut = true;
+        p.jumpsLeft = Math.max(p.jumpsLeft, p.character.maxJumps - 1);
+        p.squash = 1.35; this.squish = 1;
+        GG.bus.emit("player:bounce", {});
+        lvl.fx.burst({ x: this.cx, y: this.y, count: 10, color: ["#ff8ad0", "#fff", "#caff7a"], speed: 120, life: 0.4, glow: true });
+      }
+    }
+    render(ctx) {
+      const s = 1 - this.squish * 0.35, cx = this.cx, by = this.y + this.h;
+      ctx.save();
+      ctx.fillStyle = "#e8dcc0"; ctx.fillRect(cx - 5, by - 10, 10, 10);
+      ctx.translate(cx, by - 8); ctx.scale(1 + this.squish * 0.2, s);
+      const g = ctx.createLinearGradient(0, -16, 0, 0);
+      g.addColorStop(0, "#ff7ac8"); g.addColorStop(1, "#b0357e");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, 0, this.w / 2, 13, 0, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = "#fff4fb";
+      for (const [x, y, r] of [[-14, -6, 3], [-3, -10, 2.5], [10, -5, 3], [4, -3, 1.8]]) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+      ctx.restore();
+    }
+  }
+
+  /* ---------------------------------------------------------------------
+   * LightReceiver — a sun crystal. Steer a golden sunbeam into it (turn
+   * the mirrors with ACTION) and it wakes, latching its channel.
+   * ------------------------------------------------------------------- */
+  class LightReceiver extends GObj {
+    constructor(cfg) { super(Object.assign({ w: T, h: T }, cfg)); this.isReceiver = true; this.lit = false; this.charge = 0; this.done = false; this.t = 0; }
+    update(dt, level) {
+      this.t += dt;
+      if (!this.done) {
+        this.charge = U.clamp(this.charge + (this.lit ? dt * 2 : -dt), 0, 1);
+        if (this.charge >= 1) {
+          this.done = true;
+          GG.bus.emit("lock:opened", {});
+          level.fx.burst({ x: this.cx, y: this.cy, count: 30, color: ["#ffe79a", "#fff"], speed: 180, life: 0.7, glow: true });
+        }
+      }
+      level.setChannel(this.channel, this.done);
+    }
+    render(ctx) {
+      const k = this.done ? 1 : this.charge;
+      ctx.save(); ctx.translate(this.cx, this.cy);
+      ctx.fillStyle = "#3a3450"; ctx.fillRect(-12, 8, 24, 8);
+      ctx.fillStyle = `rgba(255,${200 + 55 * k},${120 + 100 * k},${0.35 + 0.65 * k})`;
+      ctx.shadowBlur = 8 + 20 * k; ctx.shadowColor = "#ffe79a";
+      ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(9, 0); ctx.lineTo(0, 10); ctx.lineTo(-9, 0); ctx.fill();
+      ctx.restore();
+    }
+    getState() { return this.done ? 100 : Math.round(this.charge * 99); }
+    setState(s) { this.done = s >= 100; this.charge = (s || 0) / 100; }
+  }
+
   Object.assign(EXT, {
     beetle: Beetle, toad: Toad, bat: Bat, spitter: Spitter, moth: Moth,
     span: Span, barrier: Barrier, shrine: PowerShrine, passage: Passage,
     gatesign: GateSign, arena: ArenaSeal, lore: LoreStone,
+    water: Water, updraft: Updraft, bouncer: Bouncer, receiver: LightReceiver,
   });
-  Object.assign(O, { Creature, Beetle, Toad, Bat, Spitter, Moth, Span, Barrier, PowerShrine, Passage, GateSign, ArenaSeal, LoreStone });
+  Object.assign(O, { Creature, Beetle, Toad, Bat, Spitter, Moth, Span, Barrier, PowerShrine, Passage, GateSign, ArenaSeal, LoreStone, Water, Updraft, Bouncer, LightReceiver });
 })(window);
